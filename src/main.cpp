@@ -11,9 +11,25 @@
 #include <ctime>
 #include <cmath>
 #include <limits>
+#include <random>
 
-#define M_PI 3.1415
+#define IMAGE_WIDTH 512
+#define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
+#define AIR_INDEX 1.0
+#define RENDER_STEP_COUNT 1024
+
+static std:: default_random_engine engine (10) ; // random s e ed = 10
+static std:: uniform_real_distribution<double> uniform ( 0 , 1) ;
+
+void boxMuller( double stdev , double &x , double &y ) 
+{
+	double r1 = uniform ( engine ) ;
+	double r2 = uniform ( engine ) ;
+	x = sqrt( - 2 * log ( r1 ) ) * cos (2 * M_PI * r2 ) * stdev ;
+	y = sqrt( - 2 * log(r1)) * sin(2 * M_PI * r2) * stdev;
+}
+
 
 class Timer
 {
@@ -166,13 +182,14 @@ typedef struct Sphere
 		return true;
 	}
 	Vector3 center;
-	Vector3 color;
 	Vector3 albedo;
 	double radius;
+	bool isMirror;
+	bool isTransparent;
+	float refractiveIndex;
 } Sphere;
 
 
-#define IMAGE_WIDTH 512
 
 double clamp255(double x)
 {
@@ -224,7 +241,7 @@ public:
 		return hasIntersected;
 	}
 
-	Vector3 getColor(Ray ray)
+	Vector3 getColor(Ray ray, const int numBounces)
 	{
 		Vector3 intersectionPoint = { 0.0, 0.0 ,0.0 };
 		Vector3 intersectionNormal = { 0.0, 0.0, 0.0 };
@@ -232,6 +249,57 @@ public:
 		double t = 0;
 		if (intersect(ray, intersectionPoint, intersectionNormal, t, hitObjectIndex))
 		{
+
+			if (numBounces < 0)
+			{
+				return { 0, 0, 0 };
+				//return { 10000000, 0, 0 };
+			}
+
+			if (objects[hitObjectIndex].isTransparent || objects[hitObjectIndex].isMirror)
+			{
+				if (objects[hitObjectIndex].isMirror)
+				{
+					Ray bounceRay = { intersectionPoint + EPSILON * intersectionNormal, ray.direction - 2.0 * dot(ray.direction, intersectionNormal) * intersectionNormal };
+					return getColor(bounceRay, numBounces - 1);
+				}
+
+				double indexRatio = 0;
+				double n1 = AIR_INDEX;
+				double n2 = objects[hitObjectIndex].refractiveIndex;
+				Ray fresnelRay = { { 0, 0, 0 }, { 0, 0, 0 } };
+				if (dot(ray.direction, intersectionNormal) < 0) // We enter inside the object
+				{
+					indexRatio = (AIR_INDEX / objects[hitObjectIndex].refractiveIndex);
+					Vector3 Tt = indexRatio * (ray.direction - dot(ray.direction, intersectionNormal) * intersectionNormal);
+					Vector3 Tn = -sqrt(1 - sqr(indexRatio) * (1 - sqr(dot(ray.direction, intersectionNormal)))) * intersectionNormal;
+					fresnelRay = { intersectionPoint - EPSILON * intersectionNormal, Tn + Tt };
+				}
+				else // else, we exit the object
+				{
+					std::swap(n1, n2);
+					indexRatio = (objects[hitObjectIndex].refractiveIndex / AIR_INDEX);
+					Vector3 Tt = indexRatio * (ray.direction - dot(ray.direction, intersectionNormal) * intersectionNormal);
+					Vector3 Tn = sqrt(1 - sqr(indexRatio) * (1 - sqr(dot(ray.direction, intersectionNormal)))) * intersectionNormal;
+					fresnelRay = { intersectionPoint + EPSILON * intersectionNormal, Tn + Tt };
+					
+				}
+
+				double k0 = sqr(n1 - n2) / sqr(n1 + n2);
+				double alphaR = k0 + (1 - k0) * std::powf((1 - abs(dot(intersectionNormal, ray.direction))), 5); // alphaR = Reflection coefficient
+
+				if (alphaR > uniform(engine))
+				{
+					Ray bounceRay = { intersectionPoint + EPSILON * intersectionNormal, ray.direction - 2.0 * dot(ray.direction, intersectionNormal) * intersectionNormal };
+					return getColor(bounceRay, numBounces - 1);
+				}
+				else
+				{
+					return getColor(fresnelRay, numBounces - 1);
+				}
+			}
+
+
 			Vector3 PL = lightPosition - intersectionPoint;
 			double d2 = PL.norm2();
 			PL = PL / sqrt(d2);
@@ -243,6 +311,8 @@ public:
 			Vector3 a = { 0, 0, 0 };
 			Vector3 b = { 0, 0, 0 };
 			int _ = 0;
+
+
 			if (intersect(shadowRay, a, b, shadow_t, _))
 			{
 				//std::cout << shadow_t << "\n";
@@ -278,44 +348,61 @@ public:
 	double lightIntensity = 1000 * 2e07;
 };
 
+// TO DO : custom hash function
+
 int main() 
 {
 	Timer timer;
 	timer.start();
 	const int W = IMAGE_WIDTH;
 	const int H = IMAGE_WIDTH;
-	double alpha = 60.0 * M_PI / 180.0; // FOV angle
+	double cameraFOV = 60.0 * M_PI / 180.0; // FOV angle
 	Vector3 camOrigin( 0.0, 0.0, 55.0 );
 	Scene scene;
-	scene.addSphere({ { 0, 0, 0 }, {0.5, 0.2, 0.9}, {0.6, 0.1, 0.8}, 10.0 }); // Center, color, albedo, radius
-	scene.addSphere({ { 1000, 0, 0 }, {0.5, 0.2, 0.9}, {0.7, 0.3, 0.3}, 940.0 });
-	scene.addSphere({ { -1000, 0, 0 }, {0.5, 0.2, 0.9}, {0.3, 0.3, 0.7}, 940.0 });
-	scene.addSphere({ { 0, 1000, 0 }, {0.5, 0.2, 0.9}, {0.3, 0.7, 0.3}, 940.0 });
-	scene.addSphere({ { 0, -950, 0 }, {0.5, 0.2, 0.9}, {0.3, 0.7, 0.3}, 940.0 });
-	scene.addSphere({ { 0, 0, 1000 }, {0.5, 0.2, 0.9}, {0.3, 0.3, 0.7}, 940.0 });
-	scene.addSphere({ { 0, 0, -1000 }, {0.5, 0.2, 0.9}, {0.3, 0.3, 0.7}, 940.0 });
+	scene.addSphere({ { 0, 0, 0 },  {0.3, 0.7, 0.3}, 9.0,   false, true,  1.3 }); // Transparent sphere
+
+	//                Center,          albedo,          radius, isMirror, isTransparent, refractiveIndex
+	//scene.addSphere({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
+	//scene.addSphere({ { 12, 12, 0 },   {0.1, 0.1, 0.4}, 9.0,   true,  false, 1.0 }); // Mirror sphere
+	//scene.addSphere({ { -12, 12, 0 },  {0.3, 0.7, 0.3}, 9.0,   false, true,  1.1 }); // Transparent sphere
+	//scene.addSphere({ { 0, 12, 16 },   {0.1, 0.1, 0.4}, 2.0,   false, true,  1.3 }); // Transparent sphere 2
+	//scene.addSphere({ { 5, -3, 16 },  {0.1, 0.1, 0.4}, 3.0,    false, true,  1.3 }); // Transparent sphere 3
+	//scene.addSphere({ { -5, -3, 12 },   {0.1, 0.1, 0.4}, 3.0,  true,  false, 1.3 }); // Mirror sphere 2
+
+	scene.addSphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0, false, false, 1.0 }); // Right red wall
+	scene.addSphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 }); // Left blue wall
+	scene.addSphere({ { 0, 1000, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Top green ceiling
+	scene.addSphere({ { 0, -950, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Bottom green floor
+	scene.addSphere({ { 0, 0, 1000 },  {0.7, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Back yellow wall
+	scene.addSphere({ { 0, 0, -1000 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 }); // Front blue wall
 	const double gamma = 2.2;
+
 #ifdef _OPENMP
-	std::cout << "OpenMP is active.\n";
+	std::cout << "[INFO] OpenMP is active.\n";
 #endif
 
 	char* image = new char[W * H * 3];
 
 #pragma omp parallel for
-	for (int x = 0; x < H; x++) 
+	for (int x = 0; x < H; ++x) 
 	{
-		for (int y = 0; y < W; y++) 
+		for (int y = 0; y < W; ++y) 
 		{
-			Vector3 u = normalize(Vector3(y - W / 2, -(x - H / 2), - W / ( 2 * tan(alpha / 2) )));
-			Vector3 intersectionPoint = {0, 0, 0}, intersectionNormal = {0, 0, 0};
-			Vector3 color = scene.getColor({ camOrigin, u });
-			setImageColor(image, x * W + y, gammaCorrect(color, gamma));
+			Vector3 color = { 0, 0, 0 };
+			for (int step = 0; step < RENDER_STEP_COUNT; ++step )
+			{
+
+				Vector3 u = normalize(Vector3(y - W / 2, -(x - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+				Vector3 intersectionPoint = {0, 0, 0}, intersectionNormal = {0, 0, 0};
+
+				color += scene.getColor({ camOrigin, u }, 10);
+			}
+			setImageColor(image, x * W + y, gammaCorrect(color / RENDER_STEP_COUNT, gamma));
 		}
 	}
-	stbi_write_png("outputImage/radial_gradient.png", W, H, 3, &image[0], 0);
-	
 	timer.stop();
+	stbi_write_png("outputImage/course2.png", W, H, 3, &image[0], 0);
 	delete[] image;
-	std::cout << "Milliseconds: " << timer.elapsedMilliseconds() << "\n";
+	std::cout << "[INFO] Image generation done. Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
 	return 0;
 }
