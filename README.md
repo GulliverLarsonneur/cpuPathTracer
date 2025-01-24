@@ -25,7 +25,7 @@ This path tracer supports a variety of rendering techniques and effects, includi
 > "This class will cover several aspects of computer graphics and is geared towards rendering. You will need to implement labs, a path tracer, mostly from scratch in C++. Little code will be provided: the course will need to be fully understood. I do consider that nothing is fully understood if you cannot implement it from scratch, and conversely, once understood, coding is merely a matter of touch typing. In return, you will get the satisfaction of having implemented your own tools producing beautiful computer graphics results."  
 > — Nicolas Bonneel
 
-## Important node
+## Important note
 
 This project does not include a build system yet. Visual Studio project files are provided to set up and compile the project.
 
@@ -34,3 +34,7 @@ This project does not include a build system yet. Visual Studio project files ar
 1. Open the `.sln` file in Visual Studio.
 2. Build the project using the **Release** or **Debug** configuration.
 3. Run the compiled executable to generate rendered images.
+
+### Screenshots
+
+![Screenshot of the application, end of course 1](screenshots/couse1_11.png)
