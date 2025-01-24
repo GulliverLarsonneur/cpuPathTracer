@@ -12,66 +12,20 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <cmath>
+#include <omp.h>
 
 #define IMAGE_WIDTH 512
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
 #define RENDER_STEP_COUNT 1024
+#define AA_RADIUS 0.33
 
-static std:: default_random_engine engine (10) ; // random s e ed = 10
-static std:: uniform_real_distribution<double> uniform ( 0 , 1) ;
+// TO DO : make multiple different random engines !
+// TO DO : Use a custom hash
+// TO DO : Implement Sobol and Halton sequences Quasi Monte-Carlo sampling
 
-void boxMuller( double stdev , double &x , double &y ) 
-{
-	double r1 = uniform ( engine ) ;
-	double r2 = uniform ( engine ) ;
-	x = sqrt( - 2 * log ( r1 ) ) * cos (2 * M_PI * r2 ) * stdev ;
-	y = sqrt( - 2 * log(r1)) * sin(2 * M_PI * r2) * stdev;
-}
-
-
-class Timer
-{
-public:
-	void start()
-	{
-		m_StartTime = std::chrono::system_clock::now();
-		m_bRunning = true;
-	}
-
-	void stop()
-	{
-		m_EndTime = std::chrono::system_clock::now();
-		m_bRunning = false;
-	}
-
-	double elapsedMilliseconds()
-	{
-		std::chrono::time_point<std::chrono::system_clock> endTime;
-
-		if(m_bRunning)
-		{
-			endTime = std::chrono::system_clock::now();
-		}
-		else
-		{
-			endTime = m_EndTime;
-		}
-
-		return std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_StartTime).count();
-	}
-
-	double elapsedSeconds()
-	{
-		return elapsedMilliseconds() / 1000.0;
-	}
-
-private:
-	std::chrono::time_point<std::chrono::system_clock> m_StartTime;
-	std::chrono::time_point<std::chrono::system_clock> m_EndTime;
-	bool                                               m_bRunning = false;
-};
 
 
 static inline double sqr(double x) 
@@ -80,7 +34,7 @@ static inline double sqr(double x)
 }
 
 
-typedef struct Vector3 
+typedef struct Vector3 // TO DO : make this with simple x, y, z components
 {
 	Vector3(double x, double y, double z) 
 	{
@@ -153,6 +107,91 @@ typedef struct Ray
 	Vector3 direction;
 } Ray;
 
+
+
+static std::default_random_engine engine; // random s e ed = 10
+static std::uniform_real_distribution<double> uniform( 0 , 1) ;
+
+// generates a gaussian distribution with two uniform distributions as an input (x and y) and a standard deviation :
+inline void boxMuller( double stdev , double &x , double &y )
+{
+	double r1 = uniform(engine) ;
+	double r2 = uniform(engine) ;
+	x = sqrt( -2 * log(r1)) * cos(2 * M_PI * r2) * stdev;
+	y = sqrt( -2 * log(r1)) * sin(2 * M_PI * r2) * stdev;
+}
+
+union FloatToInt {
+	float f;
+	int i;
+};
+
+inline int floatToInt(float value) {
+	FloatToInt temp;
+	temp.f = value;
+	return temp.i;
+}
+
+inline float fract(float value) {
+	return value - std::floor(value);
+}
+
+float hash11(float p) // From https://www.shadertoy.com/view/4djSRW
+{
+	p = fract(p * .1031);
+	p *= p + 33.33;
+	p *= p + p;
+	return fract(p);
+}
+
+float hash13(Vector3 p3) // From https://www.shadertoy.com/view/4djSRW
+{
+	p3 = { fract((p3 * 0.1031)[0]), fract((p3 * 0.1031)[1]), fract((p3 * 0.1031)[2]) };
+	p3 += Vector3({p3[0] * (p3[2] + 31.32), p3[1] * (p3[1] + 31.32), p3[2] * (p3[0] + 31.32)});
+	return fract((p3[0] + p3[1]) * p3[2]);
+}
+
+class Timer
+{
+public:
+	void start()
+	{
+		m_StartTime = std::chrono::system_clock::now();
+		m_bRunning = true;
+	}
+
+	void stop()
+	{
+		m_EndTime = std::chrono::system_clock::now();
+		m_bRunning = false;
+	}
+
+	double elapsedMilliseconds()
+	{
+		std::chrono::time_point<std::chrono::system_clock> endTime;
+
+		if(m_bRunning)
+		{
+			endTime = std::chrono::system_clock::now();
+		}
+		else
+		{
+			endTime = m_EndTime;
+		}
+
+		return std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_StartTime).count();
+	}
+
+	double elapsedSeconds()
+	{
+		return elapsedMilliseconds() / 1000.0;
+	}
+
+private:
+	std::chrono::time_point<std::chrono::system_clock> m_StartTime;
+	std::chrono::time_point<std::chrono::system_clock> m_EndTime;
+	bool                                               m_bRunning = false;
+};
 
 
 typedef struct Sphere
@@ -288,7 +327,8 @@ public:
 				double k0 = sqr(n1 - n2) / sqr(n1 + n2);
 				double alphaR = k0 + (1 - k0) * std::powf((1 - abs(dot(intersectionNormal, ray.direction))), 5); // alphaR = Reflection coefficient
 
-				if (alphaR > uniform(engine))
+				//int threadID = omp_get_thread_num(); // TO DO : fix this !
+				if (alphaR > hash13(intersectionPoint))//uniform(engine))//uniform(engine[threadID]))
 				{
 					Ray bounceRay = { intersectionPoint + EPSILON * intersectionNormal, ray.direction - 2.0 * dot(ray.direction, intersectionNormal) * intersectionNormal };
 					return getColor(bounceRay, numBounces - 1);
@@ -348,7 +388,7 @@ public:
 	double lightIntensity = 1000 * 2e07;
 };
 
-// TO DO : custom hash function
+// TO DO : implement custom hash function
 
 int main() 
 {
@@ -382,17 +422,20 @@ int main()
 #endif
 
 	char* image = new char[W * H * 3];
-
+	std::cout << "[INFO] Rendering started.\n";
 #pragma omp parallel for
 	for (int x = 0; x < H; ++x) 
 	{
 		for (int y = 0; y < W; ++y) 
 		{
 			Vector3 color = { 0, 0, 0 };
+
 			for (int step = 0; step < RENDER_STEP_COUNT; ++step )
 			{
-
-				Vector3 u = normalize(Vector3(y - W / 2, -(x - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+				double deltaX = 0;
+				double deltaY = 0;
+				boxMuller(AA_RADIUS, deltaX, deltaY);
+				Vector3 u = normalize(Vector3(y + deltaY - W / 2, -(x + deltaX - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
 				Vector3 intersectionPoint = {0, 0, 0}, intersectionNormal = {0, 0, 0};
 
 				color += scene.getColor({ camOrigin, u }, 10);
@@ -403,6 +446,7 @@ int main()
 	timer.stop();
 	stbi_write_png("outputImage/course2.png", W, H, 3, &image[0], 0);
 	delete[] image;
-	std::cout << "[INFO] Image generation done. Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
+	std::cout << "[INFO] Image generation done.\n";
+	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
 	return 0;
 }
