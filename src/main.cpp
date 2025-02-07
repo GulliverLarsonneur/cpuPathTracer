@@ -37,6 +37,7 @@
 // TO DO : Implement Sobol and Halton sequences Quasi Monte-Carlo sampling
 // TO DO : implement "ray killing" feature : the more bounces and the largest the distance is, the less bounces we compute
 // TO DO : make it possible to input a transform matrix for the spheres
+// TO DO : implement custom ratio
 // 
 // Methode de Sobol : polynômes irréductibles x^... + x^3 + x^2 + x + 1
 // Use random sequences scrambling ! Owen scrambling 
