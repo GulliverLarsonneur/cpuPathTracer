@@ -6,10 +6,10 @@
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 2048
+#define RENDER_STEP_COUNT 50
 #define AA_RADIUS 0.33
 #define GLOBAL_NUM_BOUNCES 5
-#define DEPTH_OF_FIELD_AMPLITUDE 10.0
+#define DEPTH_OF_FIELD_AMPLITUDE 1.0
 #define DEPTH_OF_FIELD_DISTANCE 55.0
 #define _OPENMP
 
@@ -441,7 +441,7 @@ public:
 				}
 			}
 
-
+			/*
 			Vector3 PL = lightPosition - intersectionPoint;
 			double d2 = PL.norm2();
 			PL = PL / sqrt(d2);
@@ -468,7 +468,14 @@ public:
 			{
 				color = objects[hitObjectIndex].albedo * lightIntensity * dot(intersectionNormal, PL) / (4 * M_PI * d2 * M_PI);
 			}
+			*/
+			// Extended source
+			if (hitObjectIndex == 0)
+			{
+				return objects[hitObjectIndex].albedo * lightIntensity / (4 * sqr(M_PI * objects[hitObjectIndex].radius));
+			}
 
+			Vector3 color = { 0, 0, 0 };
 			// Indirect lighting
 			Vector3 randomRayDirection = random_cos(intersectionNormal, intersectionPoint); // randomly sample ray us ing random cos
 			Vector3 indirectLightingColor = objects[hitObjectIndex].albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
@@ -549,7 +556,7 @@ int main()
 				double deltaYDOF;
 				boxMuller(DEPTH_OF_FIELD_AMPLITUDE, deltaXDOF, deltaYDOF);
 				Vector3 locCamOrigin = camOrigin + Vector3(deltaXDOF, deltaYDOF, 0);
-				Vector3 camDestination = camOrigin + u * DEPTH_OF_FIELD_DISTANCE / u[2];
+				Vector3 camDestination = camOrigin + u * DEPTH_OF_FIELD_DISTANCE;
 				Vector3 localCamDirection = normalize(camDestination - locCamOrigin);
 				color += scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
 			}
@@ -557,7 +564,7 @@ int main()
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/course3.png", W, H, 3, &image[0], 0);
+	stbi_write_png("outputImage/course4.png", W, H, 3, &image[0], 0);
 	delete[] image;
 	std::cout << "[INFO] Image generation done.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
