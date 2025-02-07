@@ -6,7 +6,7 @@
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 50
+#define RENDER_STEP_COUNT 100
 #define AA_RADIUS 0.33
 #define GLOBAL_NUM_BOUNCES 5
 #define DEPTH_OF_FIELD_AMPLITUDE 1.0
@@ -31,6 +31,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+// TO DO : implement importance sampling (07/02/2025) for extended sources
+// TO DO : Make macro to enable direct / extended sources lighting
+// TO DO : make render progression percentage print
+// TO DO : implement on GPU ?
+// TO DO : allow other camera ratios
 // TO DO : ALWAYS compare the std::uniform and custom hash output images !
 // TO DO : Add a #define STOCHASTIC_SAMPLING 1
 // TO DO : make multiple different random engines !
@@ -469,6 +474,19 @@ public:
 				color = objects[hitObjectIndex].albedo * lightIntensity * dot(intersectionNormal, PL) / (4 * M_PI * d2 * M_PI);
 			}
 			*/
+
+			/*
+			Principle of the importance sampling : On the LAST bounce :
+			Camera -> many bounces -> Object intersection point P -> Light object origin L
+
+			Then, construct a ray R coming from L and going towards P, with a random angle perturbation with random cos
+			intersect R with the surface of the light object, get a L2 point
+
+			PL2 is the ray that should then be used to compute the lighting 
+
+			ALL vectors must be normalized !!
+			*/
+
 			// Extended source
 			if (hitObjectIndex == 0)
 			{
@@ -558,7 +576,7 @@ int main()
 				Vector3 locCamOrigin = camOrigin + Vector3(deltaXDOF, deltaYDOF, 0);
 				Vector3 camDestination = camOrigin + u * DEPTH_OF_FIELD_DISTANCE;
 				Vector3 localCamDirection = normalize(camDestination - locCamOrigin);
-				color += scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
+				color += scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // TO DO : The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
 			}
 			setImageColor(image, x * W + y, gammaCorrect(color / RENDER_STEP_COUNT, gamma));
 		}
