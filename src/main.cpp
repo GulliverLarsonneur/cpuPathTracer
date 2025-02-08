@@ -31,6 +31,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+// TO DO : shift index with wavelengts -> Shoot rays of a certain wavelength
 // TO DO : implement importance sampling (07/02/2025) for extended sources
 // TO DO : Make macro to enable direct / extended sources lighting
 // TO DO : make render progression percentage print
@@ -485,6 +486,9 @@ public:
 			PL2 is the ray that should then be used to compute the lighting 
 
 			ALL vectors must be normalized !!
+			Do not forget epsilon
+
+			With the final normalized vector, we compute the scalar product with the normal distance. We divide by the square of the radius, and by 0 if we are in shadow
 			*/
 
 			// Extended source
