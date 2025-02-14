@@ -2,15 +2,15 @@
 
 
 // TO DO : put all the parameters in a static struct
-#define IMAGE_WIDTH 512
+#define IMAGE_WIDTH 128
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 100
-#define AA_RADIUS 0.33
-#define GLOBAL_NUM_BOUNCES 5
-#define DEPTH_OF_FIELD_AMPLITUDE 1.0
-#define DEPTH_OF_FIELD_DISTANCE 55.0
+#define RENDER_STEP_COUNT 120
+#define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
+#define GLOBAL_NUM_BOUNCES 4
+#define DEPTH_OF_FIELD_AMPLITUDE 0.000
+#define DEPTH_OF_FIELD_DISTANCE 1.0
 #define _OPENMP
 
 
@@ -30,7 +30,9 @@
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "utilities.hpp"
 
+// TO DO : make ALL threads work on different parts of the image ! (otherwise, omp parallel for makes some threads work more than some other ones)
 // TO DO : shift index with wavelengts -> Shoot rays of a certain wavelength
 // TO DO : implement importance sampling (07/02/2025) for extended sources
 // TO DO : Make macro to enable direct / extended sources lighting
@@ -70,270 +72,8 @@
 // static std::vector<std::default_random_engine> engine(threadCount); // random seed = 10
 //static std::uniform_real_distribution<double> uniform( 0 , 1) ;
 // Note : l'encodage des polynomes est en décimal pour représenter le binaire, et le coefficient de plus bas degré (1) et de plus haut degré (1 aussi) sont ommis
-#include <thread>
-
-// Each thread has its own random engine instance
-thread_local std::default_random_engine engine{ std::random_device{}() };
-static std::uniform_real_distribution<double> uniform(0, 1);
-
-// generates a gaussian distribution with two uniform distributions as an input (x and y) and a standard deviation :
-inline void boxMuller( double stdev , double &x , double &y )
-{
-	double r1 = uniform(engine) ;
-	double r2 = uniform(engine) ;
-	x = sqrt( -2 * log(r1)) * cos(2 * M_PI * r2) * stdev;
-	y = sqrt( -2 * log(r1)) * sin(2 * M_PI * r2) * stdev;
-}
-
-static inline double sqr(double x) 
-{ 
-	return x * x; 
-}
-
-typedef struct Vector3 // TO DO : make this with simple x, y, z components
-{
-	Vector3(double x, double y, double z) 
-	{
-		coord[0] = x;
-		coord[1] = y;
-		coord[2] = z;
-	}
-	double& operator[](int i) { return coord[i]; }
-	double operator[](int i) const { return coord[i]; }
-
-	Vector3& operator+=(const Vector3& v) 
-	{
-		coord[0] += v[0];
-		coord[1] += v[1];
-		coord[2] += v[2];
-		return *this;
-	}
-
-	double norm2() const 
-	{
-		return sqr(coord[0]) + sqr(coord[1]) + sqr(coord[2]);
-	}
-
-	Vector3 getNormalized()
-	{
-		const double norm = sqrt(this->norm2());
-		return { coord[0] / norm, coord[1] / norm, coord[2] / norm };
-	}
-	double coord[3];
-};
-
-// ostream operator
-std::ostream& operator<<(std::ostream& os, const Vector3& v) {
-	os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
-	return os;
-}
 
 
-Vector3 normalize(const Vector3& v)
-{
-	const double norm = sqrt(v.norm2());
-	return { v[0] / norm, v[1] / norm, v[2] / norm };
-}
-
-
-Vector3 operator+(const Vector3& a, const Vector3& b) 
-{
-	return Vector3(a[0] + b[0], a[1] + b[1], a[2] + b[2]);
-}
-Vector3 operator-(const Vector3& a, const Vector3& b) 
-{
-	return Vector3(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-}
-Vector3 operator*(const Vector3& a, double b) 
-{
-	return Vector3(a[0]*b, a[1]*b, a[2]*b);
-}
-Vector3 operator*(double a, const Vector3& b) 
-{
-	return Vector3(a*b[0], a*b[1], a*b[2]);
-}
-Vector3 operator/(const Vector3& b, double a) 
-{
-	return Vector3(b[0]/a, b[1]/a, b[2]/a);
-}
-
-double dot(const Vector3& a, const Vector3& b) 
-{
-	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-Vector3 cross(const Vector3& a, const Vector3& b) 
-{
-	return { a[1] * b [2] - a[2] * b[1], a[2] * b[0] - b[2] * a[0], a[0] * b[1] - a[1] * b[0]};
-}
-
-Vector3 operator*(const Vector3& a, const Vector3& b) 
-{
-	return Vector3(a[0]*b[0], a[1]*b[1], a[2]*b[2]);
-}
-
-union FloatToInt {
-	float f;
-	int i;
-};
-
-inline int floatToInt(float value) {
-	FloatToInt temp;
-	temp.f = value;
-	return temp.i;
-}
-
-inline float fract(float value) {
-	return value - std::floor(value);
-}
-
-
-float hash11(float p) // From https://www.shadertoy.com/view/4djSRW
-{
-	p = fract(p * .1031);
-	p *= p + 33.33;
-	p *= p + p;
-	return fract(p);
-}
-
-float hash13(Vector3 p3) // From https://www.shadertoy.com/view/4djSRW
-{
-	p3 = { fract((p3 * 0.1031)[0]), fract((p3 * 0.1031)[1]), fract((p3 * 0.1031)[2]) };
-	p3 += Vector3({p3[0] * (p3[2] + 31.32), p3[1] * (p3[1] + 31.32), p3[2] * (p3[0] + 31.32)});
-	return fract((p3[0] + p3[1]) * p3[2]);
-}
-
-
-
-Vector3 random_cos(const Vector3& intersectionNormal, const Vector3& intersectionPoint)
-{
-	double u1 = uniform(engine);
-	double u2 = uniform(engine);
-	//double u1 = hash13(165.265632 * hash13(2406.56216 * intersectionPoint) * intersectionNormal);
-	//double u2 = hash13(144.2603585 * hash13(206.215616 * intersectionPoint) *intersectionNormal);
-	
-	//std::cout << u1 << "  " << u2 << "\n";
-	/*
-	if (u1 == 0)
-	{
-		std::cout << intersectionNormal << " " << intersectionPoint << " " << hash13(12635.265632 * intersectionNormal) << " " << hash13(245506.56216 * intersectionPoint) << "\n";
-	}
-	if (u2 == 0)
-	{
-		std::cout << intersectionNormal << " " << intersectionPoint << " " << hash13(12635.265632 * intersectionNormal) << " " << hash13(245506.56216 * intersectionPoint) << "\n";
-	}
-	*/
-	//std::cout << hash13(12565.265632 * intersectionNormal) << "\n";
-	double s = sqrt(1 - u2);
-	double x = cos(2.0 * M_PI * u1) * s;
-	double y = sin(2.0 * M_PI * u1) * s;
-	double z = sqrt(u2);
-
-
-	Vector3 tangentVector = { 0, 0, 0 };
-	// L'idée est de garantir que <N|T> = 0 dans chacun des cas
-	if (std::abs(intersectionNormal[0]) < std::abs(intersectionNormal[1]) && std::abs(intersectionNormal[0]) < std::abs(intersectionNormal[2]))
-	{
-		tangentVector = { 0, intersectionNormal[2], - intersectionNormal[1] };
-	}
-	else if (std::abs(intersectionNormal[1]) < std::abs(intersectionNormal[0]) && std::abs(intersectionNormal[1]) < std::abs(intersectionNormal[2]))
-	{
-		tangentVector = { intersectionNormal[2], 0, - intersectionNormal[0] };
-	}
-	else if (std::abs(intersectionNormal[2]) < std::abs(intersectionNormal[0]) && std::abs(intersectionNormal[2]) < std::abs(intersectionNormal[1]))
-	{
-		tangentVector = { intersectionNormal[1], - intersectionNormal[0], 0 };
-	}
-	tangentVector = normalize(tangentVector);
-	
-	Vector3 tangentVector2 = cross(tangentVector, intersectionNormal);
-	return x * tangentVector + y * tangentVector2 + z * intersectionNormal;
-}
-
-typedef struct Ray
-{
-	Vector3 origin;
-	Vector3 direction;
-} Ray;
-
-
-
-class Timer
-{
-public:
-	void start()
-	{
-		m_StartTime = std::chrono::system_clock::now();
-		m_bRunning = true;
-	}
-
-	void stop()
-	{
-		m_EndTime = std::chrono::system_clock::now();
-		m_bRunning = false;
-	}
-
-	double elapsedMilliseconds()
-	{
-		std::chrono::time_point<std::chrono::system_clock> endTime;
-
-		if(m_bRunning)
-		{
-			endTime = std::chrono::system_clock::now();
-		}
-		else
-		{
-			endTime = m_EndTime;
-		}
-
-		return std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_StartTime).count();
-	}
-
-	double elapsedSeconds()
-	{
-		return elapsedMilliseconds() / 1000.0;
-	}
-
-private:
-	std::chrono::time_point<std::chrono::system_clock> m_StartTime;
-	std::chrono::time_point<std::chrono::system_clock> m_EndTime;
-	bool                                               m_bRunning = false;
-};
-
-
-typedef struct Sphere
-{
-	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t)
-	{
-		// Resolve aX� + bX + c = 0 ; a = 1, b = 2 <ray.direction | ray.origin - center> , c = || origin - center || - radius * 2
-		double b = 2 * dot(ray.direction, ray.origin - center);
-		double delta = sqr(b) - 4 * ((ray.origin - center).norm2() - radius * radius);
-		if (delta < 0)
-			return false;
-
-		double sqrtdelta = sqrt(delta);
-		double t1 = (-b - sqrtdelta) / 2;
-		double t2 = (-b + sqrtdelta) / 2;
-
-		if (t2 < 0)
-			return false;
-		if (t1 >= 0)
-			t = t1;
-		else
-			t = t2;
-
-		//P = r.O + t * C
-		intersectionPoint = ray.origin + t * ray.direction;
-		intersectionNormal = normalize(intersectionPoint - center);
-		return true;
-	}
-	Vector3 center;
-	Vector3 albedo;
-	double radius;
-	bool isMirror;
-	bool isTransparent;
-	float refractiveIndex;
-} Sphere;
 
 
 
@@ -370,7 +110,7 @@ public:
 			Vector3 localIntersectionPoint = { 0, 0, 0 };
 			Vector3 localIntersectionNormal = { 0, 0, 0 };
 			double local_t = 0;
-			if (objects[objectIndex].intersect(ray, localIntersectionPoint, localIntersectionNormal, local_t))
+			if (objects[objectIndex]->intersect(ray, localIntersectionPoint, localIntersectionNormal, local_t))
 			{
 				if (local_t <= t_min)
 				{
@@ -402,9 +142,9 @@ public:
 				//return { 10000000, 0, 0 };
 			}
 
-			if (objects[hitObjectIndex].isTransparent || objects[hitObjectIndex].isMirror)
+			if (objects[hitObjectIndex]->isTransparent || objects[hitObjectIndex]->isMirror)
 			{
-				if (objects[hitObjectIndex].isMirror)
+				if (objects[hitObjectIndex]->isMirror)
 				{
 					Ray bounceRay = { intersectionPoint + EPSILON * intersectionNormal, ray.direction - 2.0 * dot(ray.direction, intersectionNormal) * intersectionNormal };
 					return getColor(bounceRay, numBounces - 1);
@@ -412,11 +152,11 @@ public:
 
 				double indexRatio = 0;
 				double n1 = AIR_INDEX;
-				double n2 = objects[hitObjectIndex].refractiveIndex;
+				double n2 = objects[hitObjectIndex]->refractiveIndex;
 				Ray fresnelRay = { { 0, 0, 0 }, { 0, 0, 0 } };
 				if (dot(ray.direction, intersectionNormal) < 0) // We enter inside the object
 				{
-					indexRatio = (AIR_INDEX / objects[hitObjectIndex].refractiveIndex);
+					indexRatio = (AIR_INDEX / objects[hitObjectIndex]->refractiveIndex);
 					Vector3 Tt = indexRatio * (ray.direction - dot(ray.direction, intersectionNormal) * intersectionNormal);
 					Vector3 Tn = -sqrt(1 - sqr(indexRatio) * (1 - sqr(dot(ray.direction, intersectionNormal)))) * intersectionNormal;
 					fresnelRay = { intersectionPoint - EPSILON * intersectionNormal, Tn + Tt };
@@ -424,7 +164,7 @@ public:
 				else // else, we exit the object
 				{
 					std::swap(n1, n2);
-					indexRatio = (objects[hitObjectIndex].refractiveIndex / AIR_INDEX);
+					indexRatio = (objects[hitObjectIndex]->refractiveIndex / AIR_INDEX);
 					Vector3 Tt = indexRatio * (ray.direction - dot(ray.direction, intersectionNormal) * intersectionNormal);
 					Vector3 Tn = sqrt(1 - sqr(indexRatio) * (1 - sqr(dot(ray.direction, intersectionNormal)))) * intersectionNormal;
 					fresnelRay = { intersectionPoint + EPSILON * intersectionNormal, Tn + Tt };
@@ -494,13 +234,13 @@ public:
 			// Extended source
 			if (hitObjectIndex == 0)
 			{
-				return objects[hitObjectIndex].albedo * lightIntensity / (4 * sqr(M_PI * objects[hitObjectIndex].radius));
+				return objects[hitObjectIndex]->albedo * lightIntensity / (4 * sqr(M_PI * dynamic_cast<const Sphere*>(objects[hitObjectIndex])->radius));
 			}
 
 			Vector3 color = { 0, 0, 0 };
 			// Indirect lighting
 			Vector3 randomRayDirection = random_cos(intersectionNormal, intersectionPoint); // randomly sample ray us ing random cos
-			Vector3 indirectLightingColor = objects[hitObjectIndex].albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
+			Vector3 indirectLightingColor = objects[hitObjectIndex]->albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
 			return color + indirectLightingColor;
 		}
 		else
@@ -509,12 +249,12 @@ public:
 		}
 	}
 
-	void addSphere(const Sphere& s)
+	void addObject(const Geometry* g)
 	{
-		objects.push_back(s);
+		objects.push_back(g);
 	}
 
-	std::vector<Sphere> objects;
+	std::vector<const Geometry*> objects;
 	Vector3 lightPosition = { 10.0, 20.0, 40.0}; // x = -10 dans le pdf de cours
 	double lightIntensity = 1000 * 2e07;
 };
@@ -523,6 +263,7 @@ public:
 
 int main() 
 {
+	// Orientation canonique : Y est vers le haut
 	/*
 	for (int i = 0; i < threadCount; ++i)
 	{
@@ -536,22 +277,26 @@ int main()
 	double cameraFOV = 60.0 * M_PI / 180.0; // FOV angle
 	Vector3 camOrigin( 0.0, 0.0, 55.0 );
 	Scene scene;
-	scene.addSphere({ { 0, 0, 0 },  {0.3, 0.7, 0.3}, 9.0,   false, false,  1.3 }); // Transparent sphere
-
+	scene.addObject(new Sphere({ { 0, 40, 0 },  {1.0, 1.0, 1.0}, 18.0,   false, false,  1.3 })); // Extended light !!
+	TriangleMesh* mesh = new TriangleMesh({ {1.0, 1.0, 1.0}, false, false, 1.0 });
+	mesh->readOBJ("resources/cat/cat.obj");
+	mesh->scaleTranslate(0.6, { 0, -10, 0 });
+	ComputeAABB(mesh->aabb, mesh->vertices);
+	scene.addObject(mesh);
 	//                Center,          albedo,          radius, isMirror, isTransparent, refractiveIndex
-	//scene.addSphere({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
-	scene.addSphere({ { 12, 12, 0 },   {0.1, 0.1, 0.4}, 5.0,   true,  false, 1.0 }); // Mirror sphere
-	scene.addSphere({ { -12, 12, 0 },  {0.3, 0.7, 0.3}, 5.0,   false, true,  2.0 }); // Transparent sphere
-	//scene.addSphere({ { 0, 12, 16 },   {0.1, 0.1, 0.4}, 2.0,   false, true,  1.3 }); // Transparent sphere 2
-	//scene.addSphere({ { 5, -3, 16 },  {0.1, 0.1, 0.4}, 3.0,    false, true,  1.3 }); // Transparent sphere 3
-	//scene.addSphere({ { -5, -3, 12 },   {0.1, 0.1, 0.4}, 3.0,  true,  false, 1.3 }); // Mirror sphere 2
+	//scene.addObject({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
+	//scene.addObject(new Sphere({ { 12, 12, 0 },   {0.1, 0.1, 0.4}, 5.0,   true,  false, 1.0 })); // Mirror sphere
+	//scene.addObject(new Sphere({ { -12, 12, 0 },  {0.3, 0.7, 0.3}, 5.0,   false, true,  2.0 })); // Transparent sphere
+	//scene.addObject({ { 0, 12, 16 },   {0.1, 0.1, 0.4}, 2.0,   false, true,  1.3 }); // Transparent sphere 2
+	//scene.addObject({ { 5, -3, 16 },  {0.1, 0.1, 0.4}, 3.0,    false, true,  1.3 }); // Transparent sphere 3
+	//scene.addObject({ { -5, -3, 12 },   {0.1, 0.1, 0.4}, 3.0,  true,  false, 1.3 }); // Mirror sphere 2
 
-	scene.addSphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0, false, false, 1.0 }); // Right red wall
-	scene.addSphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 }); // Left blue wall
-	scene.addSphere({ { 0, 1000, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Top green ceiling
-	scene.addSphere({ { 0, -950, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Bottom green floor
-	scene.addSphere({ { 0, 0, 1000 },  {0.7, 0.7, 0.3}, 940.0, false, false, 1.0 }); // Back yellow wall
-	scene.addSphere({ { 0, 0, -1000 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 }); // Front blue wall
+	scene.addObject(new Sphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0, false, false, 1.0 })); // Right red wall
+	scene.addObject(new Sphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 })); // Left blue wall
+	scene.addObject(new Sphere({ { 0, 1000, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Top green ceiling
+	scene.addObject(new Sphere({ { 0, -950, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Bottom green floor
+	scene.addObject(new Sphere({ { 0, 0, 1000 },  {0.7, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Back yellow wall
+	scene.addObject(new Sphere({ { 0, 0, -1000 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 })); // Front blue wall
 	const double gamma = 2.2;
 
 #ifdef _OPENMP
@@ -586,7 +331,7 @@ int main()
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/course4.png", W, H, 3, &image[0], 0);
+	stbi_write_png("outputImage/course5.png", W, H, 3, &image[0], 0);
 	delete[] image;
 	std::cout << "[INFO] Image generation done.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
