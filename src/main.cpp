@@ -1,6 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS 1
 
-
+// TO DO: add boundingboxes to the spheres !
 // TO DO : put all the parameters in a static struct
 // TO DO : put all data in std::array instead of std::vector whenever possible
 

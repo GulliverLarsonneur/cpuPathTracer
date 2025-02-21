@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <vector>
 #include <thread>
-#define MAX_BVH_DEPTH 25 // TO DO : use this
-#define BVH_LEAF_TRIANGLE_COUNT 4
+#define MAX_BVH_DEPTH 25 // TO DO : optimize this
+#define BVH_LEAF_TRIANGLE_COUNT 4 // Comes from the cost of intersecting 4 triangles VS the cost of intersecting a AABB
 
 
 // Each thread has its own random engine instance
@@ -505,7 +505,7 @@ public:
 		buildBVH(meshBVH, 0, indices.size());
 	}
 
-	void buildBVH(BVH* bvh, int startRange, int endRange)
+	void buildBVH(BVH* bvh, int startRange, int endRange) // This is a quick sort algorithm
 	{
 		bvh->startRange = startRange;
 		bvh->endRange = endRange;
@@ -535,7 +535,10 @@ public:
 				}
 			}
 		}
-		if (pivot - startRange < 1) return;
+
+
+
+		if (pivot - startRange == 0) return;
 		if (endRange - pivot == 0) return; // We absolutely don't want all triangles to be on one side
 		bvh->leftChild = new BVH();
 		bvh->rightChild = new BVH();
@@ -545,32 +548,37 @@ public:
 
 	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& best_t) const
 	{
+		// optimization TO DO : add the best_t as a parameter to intersect, and compare the intersection point distance to best_t that we currently have.
 		if (!meshAABB.intersect(ray))
 		{
 			return false;
 		}
+
 		bool hasIntersected = false;
-		std::vector<BVH*> L;
-		L.push_back(meshBVH);
-		while (!L.empty())
+		BVH* BVHstack[MAX_BVH_DEPTH];
+		BVHstack[0] = meshBVH;
+		int sizeBVHStack = 1;
+		while (sizeBVHStack > 0)
 		{
-			BVH* currentBVH = L.back();
-			L.pop_back();
+			BVH* currentBVH = BVHstack[sizeBVHStack - 1];
+			sizeBVHStack--;
 			if (currentBVH->leftChild) // A BVH with a right child ALWAYS has a left child
 			{
 				if (currentBVH->leftChild->aabb.intersect(ray))
 				{
-					L.push_back(currentBVH->leftChild);
+					sizeBVHStack++; // Test ??
+					BVHstack[sizeBVHStack] = currentBVH->leftChild;
 				}
 				if (currentBVH->rightChild->aabb.intersect(ray))
 				{
-					L.push_back(currentBVH->rightChild);
+					sizeBVHStack++;
+					BVHstack[sizeBVHStack] = currentBVH->rightChild;
 				}
 			}
 			else
 			{
 				best_t = std::numeric_limits<double>::max();
-				for (int triangleIndex = 0; triangleIndex < indices.size(); ++triangleIndex)
+				for (int triangleIndex = currentBVH->startRange; triangleIndex < currentBVH->endRange; ++triangleIndex)
 				{
 					const Vector3& A = vertices[indices[triangleIndex].vtxi];
 					const Vector3& B = vertices[indices[triangleIndex].vtxj];
