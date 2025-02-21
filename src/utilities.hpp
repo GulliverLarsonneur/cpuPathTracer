@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <vector>
 #include <thread>
+#define MAX_BVH_DEPTH 25 // TO DO : use this
+#define BVH_LEAF_TRIANGLE_COUNT 4
 
 
 // Each thread has its own random engine instance
@@ -288,10 +290,24 @@ typedef struct AABB
 			return false;
 		return (minOfMax > maxOfMin);
 	}
+	AABB(): minCoords(0.0, 0.0, 0.0), maxCoords(0.0, 0.0, 0.0) {}
 	AABB(Vector3 _minCoords, Vector3 _maxCoords): minCoords(_minCoords), maxCoords(_maxCoords) {}
 	Vector3 minCoords;
 	Vector3 maxCoords;
 };
+
+
+class BVH
+{
+public:
+	BVH() : leftChild(nullptr), rightChild(nullptr), aabb() {};
+	int startRange; // Triangle indices in the sorted array
+	int endRange;   // Triangle indices in the sorted array
+	BVH* leftChild;
+	BVH* rightChild;
+	AABB aabb;
+};
+
 
 class TriangleMesh : public Geometry
 {
@@ -300,8 +316,8 @@ public:
 	TriangleMesh(Vector3 _albedo,
 		bool _isMirror,
 		bool _isTransparent,
-		float _refractiveIndex) : Geometry(_albedo, _isMirror, _isTransparent, _refractiveIndex), aabb(Vector3{0, 0, 0}, Vector3{0, 0, 0}) {};
-	
+		float _refractiveIndex) : Geometry(_albedo, _isMirror, _isTransparent, _refractiveIndex), meshAABB(Vector3{0, 0, 0}, Vector3{0, 0, 0}) {};
+
 	void scaleTranslate(double scale, const Vector3& translation)
 	{
 		for (int vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
@@ -483,46 +499,135 @@ public:
 		fclose(f);
 
 	}
+	void initBVH()
+	{
+		meshBVH = new BVH();
+		buildBVH(meshBVH, 0, indices.size());
+	}
+
+	void buildBVH(BVH* bvh, int startRange, int endRange)
+	{
+		bvh->startRange = startRange;
+		bvh->endRange = endRange;
+		bvh->leftChild = nullptr;
+		bvh->rightChild = nullptr;
+		ComputeAABB(bvh->aabb, bvh->startRange, bvh->endRange);
+		if (startRange - endRange < BVH_LEAF_TRIANGLE_COUNT) return;
+
+		Vector3 diag = bvh->aabb.minCoords - bvh->aabb.maxCoords;
+		int axis = 2;
+		if (diag[0] >= diag[1] && diag[0] >= diag[2])
+			axis = 0;
+		if (diag[1] >= diag[0] && diag[1] >= diag[2])
+			axis = 1;
+		double milieuBoxAxis = (bvh->aabb.minCoords[axis] + bvh->aabb.maxCoords[axis]) / 2;
+		int pivot = bvh->startRange;
+		for (int triangleIndex = bvh->startRange; triangleIndex < bvh->endRange; triangleIndex++)
+		{
+			double barycentreTriangleAxis = (vertices[indices[triangleIndex].vtxi][axis] + vertices[indices[triangleIndex].vtxj][axis] + vertices[indices[triangleIndex].vtxk][axis]) / 3;
+			
+			if (barycentreTriangleAxis < milieuBoxAxis)
+			{
+				if (bvh->leftChild)
+				{
+					std::swap(indices[triangleIndex], indices[pivot]);
+					pivot++;
+				}
+			}
+		}
+		if (pivot - startRange < 1) return;
+		if (endRange - pivot == 0) return; // We absolutely don't want all triangles to be on one side
+		bvh->leftChild = new BVH();
+		bvh->rightChild = new BVH();
+		buildBVH(bvh->leftChild, bvh->startRange, pivot);
+		buildBVH(bvh->rightChild, pivot, bvh->endRange);
+	}
 
 	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& best_t) const
 	{
-		
-		if (!aabb.intersect(ray))
+		if (!meshAABB.intersect(ray))
 		{
 			return false;
 		}
-		
 		bool hasIntersected = false;
-		best_t = std::numeric_limits<double>::max();
-		for (int triangleIndex = 0; triangleIndex < indices.size(); ++triangleIndex)
+		std::vector<BVH*> L;
+		L.push_back(meshBVH);
+		while (!L.empty())
 		{
-			const Vector3& A = vertices[indices[triangleIndex].vtxi];
-			const Vector3& B = vertices[indices[triangleIndex].vtxj];
-			const Vector3& C = vertices[indices[triangleIndex].vtxk];
-			const Vector3 e1 = B - A;
-			const Vector3 e2 = C - A;
-			Vector3 N = cross(e1, e2);
-			double invDet = 1.0 / dot(ray.direction, N);
-			const Vector3 AO = ray.origin - A;
-			const Vector3 AOcrossU = cross(AO, ray.direction);
+			BVH* currentBVH = L.back();
+			L.pop_back();
+			if (currentBVH->leftChild) // A BVH with a right child ALWAYS has a left child
+			{
+				if (currentBVH->leftChild->aabb.intersect(ray))
+				{
+					L.push_back(currentBVH->leftChild);
+				}
+				if (currentBVH->rightChild->aabb.intersect(ray))
+				{
+					L.push_back(currentBVH->rightChild);
+				}
+			}
+			else
+			{
+				best_t = std::numeric_limits<double>::max();
+				for (int triangleIndex = 0; triangleIndex < indices.size(); ++triangleIndex)
+				{
+					const Vector3& A = vertices[indices[triangleIndex].vtxi];
+					const Vector3& B = vertices[indices[triangleIndex].vtxj];
+					const Vector3& C = vertices[indices[triangleIndex].vtxk];
+					const Vector3 e1 = B - A;
+					const Vector3 e2 = C - A;
+					Vector3 N = cross(e1, e2);
+					double invDet = 1.0 / dot(ray.direction, N);
+					const Vector3 AO = ray.origin - A;
+					const Vector3 AOcrossU = cross(AO, ray.direction);
 
-			double beta = - dot(e2, AOcrossU) * invDet;
-			if ((beta < 0) || (beta > 1)) continue;
-			double gamma = dot(e1, AOcrossU) * invDet;
-			if ((gamma < 0) || (gamma > 1)) continue;
-			double alpha = 1 - beta - gamma;
-			if (alpha < 0) continue; // No need to check alpha > 1
-			double t = - dot(AO, N) * invDet;
-			if (t < 0) continue; // Triangle behind the camera
-			hasIntersected = true;
-			if (t > best_t) continue;
-			best_t = t;
-			
-			intersectionPoint = ray.origin + t * ray.direction;
-			intersectionNormal = normalize(N);
+					double beta = - dot(e2, AOcrossU) * invDet;
+					if ((beta < 0) || (beta > 1)) continue;
+					double gamma = dot(e1, AOcrossU) * invDet;
+					if ((gamma < 0) || (gamma > 1)) continue;
+					double alpha = 1 - beta - gamma;
+					if (alpha < 0) continue; // No need to check alpha > 1
+					double t = - dot(AO, N) * invDet;
+					if (t < 0) continue; // Triangle behind the camera
+					hasIntersected = true;
+					if (t > best_t) continue;
+					best_t = t;
+
+					intersectionPoint = ray.origin + t * ray.direction;
+					intersectionNormal = normalize(N);
+				}
+			}
 		}
+
 		//std::cout << hasIntersected << "\n";
 		return hasIntersected;
+	}
+
+	void ComputeAABB(AABB& aabb, int startRange = 0, int endRange = -1)
+	{
+		if (endRange == -1)
+		{
+			endRange = vertices.size();
+		}
+		Vector3 minCoords = std::numeric_limits<double>::max() * Vector3{ 1.0, 1.0, 1.0 };
+		Vector3 maxCoords = std::numeric_limits<double>::max() * Vector3{ -1.0, -1.0, -1.0 };
+
+		for (int triangleIndex = startRange; triangleIndex < endRange; ++triangleIndex)
+		{
+			for (int j = 0; j < 3; ++j)
+			{
+				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxi][j], minCoords[j]);
+				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxj][j], minCoords[j]);
+				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxk][j], minCoords[j]);
+				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxi][j], maxCoords[j]);
+				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxj][j], maxCoords[j]);
+				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxk][j], maxCoords[j]);
+			}
+		}
+		aabb.minCoords = minCoords;
+		aabb.maxCoords = maxCoords;
+		//std::cout << minCoords << " " << maxCoords << "\n";
 	}
 public:
 	std::vector<TriangleIndices> indices;
@@ -530,29 +635,9 @@ public:
 	std::vector<Vector3> normals;
 	std::vector<Vector3> uvs;
 	std::vector<Vector3> vertexcolors;
-	AABB aabb;
-	
+	AABB meshAABB;
+	BVH* meshBVH;
 };
-
-
-
-void ComputeAABB(AABB& aabb, std::vector<Vector3>& vertices)
-{
-	Vector3 minCoords = std::numeric_limits<double>::max() * Vector3{ 1.0, 1.0, 1.0 };
-	Vector3 maxCoords = std::numeric_limits<double>::max() * Vector3{ -1.0, -1.0, -1.0 };
-
-	for (int vertexIndex{ 0 }; vertexIndex < vertices.size(); ++vertexIndex)
-	{
-		for (int j{ 0 }; j < 3; ++j)
-		{
-			minCoords[j] = std::min(vertices[vertexIndex][j], minCoords[j]);
-			maxCoords[j] = std::max(vertices[vertexIndex][j], maxCoords[j]);
-		}
-	}
-	aabb.minCoords = minCoords;
-	aabb.maxCoords = maxCoords;
-	//std::cout << minCoords << " " << maxCoords << "\n";
-}
 
 typedef struct Sphere : public Geometry
 {
@@ -589,3 +674,5 @@ public:
 	Vector3 center;
 	double radius;
 } Sphere;
+
+

@@ -2,13 +2,16 @@
 
 
 // TO DO : put all the parameters in a static struct
+// TO DO : put all data in std::array instead of std::vector whenever possible
+
+// TO DO : remove all pointers to BVH
 #define IMAGE_WIDTH 128
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 120
+#define RENDER_STEP_COUNT 10
 #define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
-#define GLOBAL_NUM_BOUNCES 4
+#define GLOBAL_NUM_BOUNCES 3
 #define DEPTH_OF_FIELD_AMPLITUDE 0.000
 #define DEPTH_OF_FIELD_DISTANCE 1.0
 #define _OPENMP
@@ -281,7 +284,8 @@ int main()
 	TriangleMesh* mesh = new TriangleMesh({ {1.0, 1.0, 1.0}, false, false, 1.0 });
 	mesh->readOBJ("resources/cat/cat.obj");
 	mesh->scaleTranslate(0.6, { 0, -10, 0 });
-	ComputeAABB(mesh->aabb, mesh->vertices);
+	mesh->ComputeAABB(mesh->meshAABB); // TO DO : automate this, putt all mesh initializations in the constructor
+	mesh->initBVH();
 	scene.addObject(mesh);
 	//                Center,          albedo,          radius, isMirror, isTransparent, refractiveIndex
 	//scene.addObject({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
@@ -305,7 +309,7 @@ int main()
 
 	char* image = new char[W * H * 3];
 	std::cout << "[INFO] Rendering started.\n";
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic, 1)
 	for (int x = 0; x < H; ++x) 
 	{
 		for (int y = 0; y < W; ++y) 
@@ -331,7 +335,7 @@ int main()
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/course5.png", W, H, 3, &image[0], 0);
+	stbi_write_png("outputImage/course6.png", W, H, 3, &image[0], 0);
 	delete[] image;
 	std::cout << "[INFO] Image generation done.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
