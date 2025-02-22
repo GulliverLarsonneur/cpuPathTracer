@@ -586,6 +586,7 @@ public:
 					const Vector3 e1 = B - A;
 					const Vector3 e2 = C - A;
 					Vector3 N = cross(e1, e2);
+
 					double invDet = 1.0 / dot(ray.direction, N);
 					const Vector3 AO = ray.origin - A;
 					const Vector3 AOcrossU = cross(AO, ray.direction);
@@ -603,12 +604,14 @@ public:
 					best_t = t;
 
 					intersectionPoint = ray.origin + t * ray.direction;
-					intersectionNormal = normalize(N);
+
+					const Vector3& NA = normals[indices[triangleIndex].ni];
+					const Vector3& NB = normals[indices[triangleIndex].nj];
+					const Vector3& NC = normals[indices[triangleIndex].nk];
+					intersectionNormal = normalize(NA * alpha + NB * beta + NC * gamma);
 				}
 			}
 		}
-
-		//std::cout << hasIntersected << "\n";
 		return hasIntersected;
 	}
 

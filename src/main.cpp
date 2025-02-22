@@ -5,11 +5,11 @@
 // TO DO : put all data in std::array instead of std::vector whenever possible
 
 // TO DO : remove all pointers to BVH
-#define IMAGE_WIDTH 128
+#define IMAGE_WIDTH 512
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 10
+#define RENDER_STEP_COUNT 300
 #define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
 #define GLOBAL_NUM_BOUNCES 3
 #define DEPTH_OF_FIELD_AMPLITUDE 0.000
