@@ -37,5 +37,5 @@ This project does not include a build system yet. Visual Studio project files ar
 
 ### Screenshots
 
-![Screenshot of the application, end of course 1](screenshots/couse1_11.png)  
+![Screenshot of the application, end of course 1](screenshots/course1/couse1_11.png)  
 *Screenshot of the application, end of course 1*
