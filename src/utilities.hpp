@@ -717,7 +717,7 @@ public:
 		//P = r.O + t * C
 		intersectionPoint = ray.origin + t * ray.direction;
 		intersectionNormal = normalize(intersectionPoint - center);
-		//col = albedo;
+		col = albedo;
 		double frequency = 0.2;
 		//double lightness = abs(fmod(frequency * (intersectionPoint[0] + intersectionPoint[1] + intersectionPoint[2]), 1.0));
 		//double lightness = abs(fmod(frequency * (intersectionPoint[0]), 1.0) * fmod(intersectionPoint[1], 1.0) * fmod(intersectionPoint[2], 1.0));

@@ -5,11 +5,12 @@
 // TO DO : put all data in std::array instead of std::vector whenever possible
 
 // TO DO : remove all pointers to BVH
-#define IMAGE_WIDTH 512
+#define IMAGE_WIDTH 1024
+#define CAMERA_FOV 90.0 //60.0
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 30
+#define RENDER_STEP_COUNT 150
 #define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
 #define GLOBAL_NUM_BOUNCES 3
 #define DEPTH_OF_FIELD_AMPLITUDE 0.000
@@ -281,12 +282,13 @@ int main()
 	timer.start();
 	const int W = IMAGE_WIDTH;
 	const int H = IMAGE_WIDTH;
-	double cameraFOV = 60.0 * M_PI / 180.0; // FOV angle
-	Vector3 camOrigin( 0.0, 0.0, 55.0 );
-	Vector3 cameraUp(0.0, 1.0, 0.0);
-	Vector3 cameraDir(0.0, 0.0, -1.0);
-	double angleUp = 30 * M_PI / 180.0;
-	Vector3 rightCam = cross(cameraUp, cameraDir);
+	double cameraFOV = CAMERA_FOV * M_PI / 180.0; // FOV angle
+	Vector3 camOrigin( 0.0, -8.0, 20.0 );
+	
+	double angleUp = 35 * M_PI / 180.0;
+	Vector3 cameraUp(0.0, cos(angleUp), sin(angleUp));
+	Vector3 cameraDir(0.0, -sin(angleUp), cos(angleUp));
+	Vector3 cameraRight = cross(cameraUp, cameraDir);
 	Scene scene;
 	scene.addObject(new Sphere({ { 0, 40, 0 },  {1.0, 1.0, 1.0}, 18.0,   false, false,  1.3 })); // Extended light !!
 	TriangleMesh* mesh = new TriangleMesh({ {1.0, 1.0, 1.0}, false, false, 1.0 });
@@ -339,6 +341,9 @@ int main()
 				Vector3 locCamOrigin = camOrigin + Vector3(deltaXDOF, deltaYDOF, 0);
 				Vector3 camDestination = camOrigin + u * DEPTH_OF_FIELD_DISTANCE;
 				Vector3 localCamDirection = normalize(camDestination - locCamOrigin);
+
+				localCamDirection = localCamDirection[0] * cameraRight + localCamDirection[1] * cameraUp + localCamDirection[2] * cameraDir;
+
 				color += scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // TO DO : The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
 			}
 			setImageColor(image, x * W + y, gammaCorrect(color / RENDER_STEP_COUNT, gamma));
