@@ -9,7 +9,7 @@
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 300
+#define RENDER_STEP_COUNT 30
 #define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
 #define GLOBAL_NUM_BOUNCES 3
 #define DEPTH_OF_FIELD_AMPLITUDE 0.000
@@ -103,7 +103,7 @@ Vector3 gammaCorrect(Vector3 v, double gamma)
 class Scene
 {
 public:
-	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t, int& hitObjectIndex) // objectIndex is a returned int to know th albedo
+	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t, int& hitObjectIndex, Vector3& object_col) // objectIndex is a returned int to know th albedo
 	{
 		bool hasIntersected = false;
 
@@ -112,8 +112,9 @@ public:
 		{
 			Vector3 localIntersectionPoint = { 0, 0, 0 };
 			Vector3 localIntersectionNormal = { 0, 0, 0 };
+			Vector3 localCol = { 0, 0, 0 };
 			double local_t = 0;
-			if (objects[objectIndex]->intersect(ray, localIntersectionPoint, localIntersectionNormal, local_t))
+			if (objects[objectIndex]->intersect(ray, localIntersectionPoint, localIntersectionNormal, local_t, localCol))
 			{
 				if (local_t <= t_min)
 				{
@@ -123,6 +124,7 @@ public:
 					t_min = local_t;
 					t = t_min;
 					hitObjectIndex = objectIndex;
+					object_col = localCol;
 				}
 				hasIntersected = true;
 			}
@@ -134,11 +136,12 @@ public:
 	{
 		Vector3 intersectionPoint = { 0.0, 0.0 ,0.0 };
 		Vector3 intersectionNormal = { 0.0, 0.0, 0.0 };
+
+		Vector3 color = { 0, 0, 0 };
 		int hitObjectIndex = 0;
 		double t = 0;
-		if (intersect(ray, intersectionPoint, intersectionNormal, t, hitObjectIndex))
+		if (intersect(ray, intersectionPoint, intersectionNormal, t, hitObjectIndex, color))
 		{
-
 			if (numBounces < 0)
 			{
 				return { 0, 0, 0 };
@@ -240,11 +243,12 @@ public:
 				return objects[hitObjectIndex]->albedo * lightIntensity / (4 * sqr(M_PI * dynamic_cast<const Sphere*>(objects[hitObjectIndex])->radius));
 			}
 
-			Vector3 color = { 0, 0, 0 };
 			// Indirect lighting
 			Vector3 randomRayDirection = random_cos(intersectionNormal, intersectionPoint); // randomly sample ray us ing random cos
-			Vector3 indirectLightingColor = objects[hitObjectIndex]->albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
-			return color + indirectLightingColor;
+			//Vector3 indirectLightingColor = objects[hitObjectIndex]->albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
+			//return color + indirectLightingColor;
+			
+			return color * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
 		}
 		else
 		{
@@ -279,6 +283,10 @@ int main()
 	const int H = IMAGE_WIDTH;
 	double cameraFOV = 60.0 * M_PI / 180.0; // FOV angle
 	Vector3 camOrigin( 0.0, 0.0, 55.0 );
+	Vector3 cameraUp(0.0, 1.0, 0.0);
+	Vector3 cameraDir(0.0, 0.0, -1.0);
+	double angleUp = 30 * M_PI / 180.0;
+	Vector3 rightCam = cross(cameraUp, cameraDir);
 	Scene scene;
 	scene.addObject(new Sphere({ { 0, 40, 0 },  {1.0, 1.0, 1.0}, 18.0,   false, false,  1.3 })); // Extended light !!
 	TriangleMesh* mesh = new TriangleMesh({ {1.0, 1.0, 1.0}, false, false, 1.0 });
@@ -286,6 +294,8 @@ int main()
 	mesh->scaleTranslate(0.6, { 0, -10, 0 });
 	mesh->ComputeAABB(mesh->meshAABB); // TO DO : automate this, putt all mesh initializations in the constructor
 	mesh->initBVH();
+
+	mesh->loadTexture("resources/cat/cat_diff.png");
 	scene.addObject(mesh);
 	//                Center,          albedo,          radius, isMirror, isTransparent, refractiveIndex
 	//scene.addObject({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
@@ -335,7 +345,7 @@ int main()
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/course6.png", W, H, 3, &image[0], 0);
+	stbi_write_png("outputImage/course7.png", W, H, 3, &image[0], 0);
 	delete[] image;
 	std::cout << "[INFO] Image generation done.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";

@@ -71,7 +71,6 @@ Vector3 normalize(const Vector3& v)
 	return { v[0] / norm, v[1] / norm, v[2] / norm };
 }
 
-
 Vector3 operator+(const Vector3& a, const Vector3& b) 
 {
 	return Vector3(a[0] + b[0], a[1] + b[1], a[2] + b[2]);
@@ -255,7 +254,7 @@ public:
 	bool _isMirror,
 	bool _isTransparent,
 	float _refractiveIndex) :albedo(_albedo), isMirror(_isMirror), isTransparent(_isTransparent), refractiveIndex(_refractiveIndex){};
-	virtual bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t) const = 0;
+	virtual bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t, Vector3& col) const = 0;
 public:
 	Vector3 albedo;
 	bool isMirror;
@@ -499,6 +498,24 @@ public:
 		fclose(f);
 
 	}
+	void loadTexture(const char* fileName)
+	{
+		int w;
+		int h;
+		int channels_in_file;
+		unsigned char* image = stbi_load(fileName, &w, &h, &channels_in_file, 3);
+
+		std::vector<float> catTexture;
+		for (int i = 0; i < w * h * 3; i++)
+		{
+			catTexture.push_back(std::pow(double(image[i])/256.0, 2.2));
+		}
+
+		texW.push_back(w);
+		texH.push_back(h);
+		textures.push_back(catTexture);
+	}
+
 	void initBVH()
 	{
 		meshBVH = new BVH();
@@ -524,7 +541,9 @@ public:
 		int pivot = bvh->startRange;
 		for (int triangleIndex = bvh->startRange; triangleIndex < bvh->endRange; triangleIndex++)
 		{
-			double barycentreTriangleAxis = (vertices[indices[triangleIndex].vtxi][axis] + vertices[indices[triangleIndex].vtxj][axis] + vertices[indices[triangleIndex].vtxk][axis]) / 3;
+			double barycentreTriangleAxis = (vertices[indices[triangleIndex].vtxi][axis] +
+				vertices[indices[triangleIndex].vtxj][axis] + 
+				vertices[indices[triangleIndex].vtxk][axis]) / 3;
 			
 			if (barycentreTriangleAxis < milieuBoxAxis)
 			{
@@ -536,8 +555,6 @@ public:
 			}
 		}
 
-
-
 		if (pivot - startRange == 0) return;
 		if (endRange - pivot == 0) return; // We absolutely don't want all triangles to be on one side
 		bvh->leftChild = new BVH();
@@ -546,7 +563,7 @@ public:
 		buildBVH(bvh->rightChild, pivot, bvh->endRange);
 	}
 
-	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& best_t) const
+	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& best_t, Vector3& col) const
 	{
 		// optimization TO DO : add the best_t as a parameter to intersect, and compare the intersection point distance to best_t that we currently have.
 		if (!meshAABB.intersect(ray))
@@ -609,6 +626,23 @@ public:
 					const Vector3& NB = normals[indices[triangleIndex].nj];
 					const Vector3& NC = normals[indices[triangleIndex].nk];
 					intersectionNormal = normalize(NA * alpha + NB * beta + NC * gamma);
+					if (textures.size() != 0)
+					{
+						// This should be a Vector2
+						Vector3 uv = alpha * uvs[indices[triangleIndex].uvi] + beta * uvs[indices[triangleIndex].uvj] + gamma * uvs[indices[triangleIndex].uvk];// group sert à donner l'ID de la texture dans le cas où il y a plusieurs textures
+						int w = texW[indices[triangleIndex].group];
+						int h = texH[indices[triangleIndex].group];
+						//std::cout << "(u0,v0) = (" << uv[0] << "," << uv[1] << ")" << std::endl;
+						uv[0] = fmod(uv[0] + 10000, 1.) * w; // +10000 => Trick to prevent the error with fmod of negative values
+						uv[1] = (1.0 - fmod(uv[1] + 10000, 1.)) * h;
+						int uvx = uv[0];
+						int uvy = uv[1];
+
+						//std::cout << "(h, w) = (" << h << ", " << w << ")  (u1,v1) = (" << uvx << "," << uvy << "), ID = " << 3 * (uvx + uvy * w) << " group = " << indices[triangleIndex].group << " texture size : " << textures[indices[triangleIndex].group].size() << std::endl;
+
+						col = Vector3(textures[indices[triangleIndex].group][3 * (uvx + uvy * w)], textures[indices[triangleIndex].group][3 * (uvx + uvy * w) + 1], textures[indices[triangleIndex].group][3 * (uvx + uvy * w) + 2]); // TO DO : finish this !!
+						//std::cout << "col = " << col << "\n" << std::endl;
+					}
 				}
 			}
 		}
@@ -641,6 +675,9 @@ public:
 		//std::cout << minCoords << " " << maxCoords << "\n";
 	}
 public:
+	std::vector<int> texW;
+	std::vector<int> texH;
+	std::vector<std::vector<float>> textures;
 	std::vector<TriangleIndices> indices;
 	std::vector<Vector3> vertices;
 	std::vector<Vector3> normals;
@@ -658,7 +695,7 @@ public:
 		bool _isMirror,
 		bool _isTransparent,
 		float _refractiveIndex) : center(_center), radius(_radius), Geometry(_albedo, _isMirror, _isTransparent, _refractiveIndex){}
-	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t) const
+	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t, Vector3& col) const
 	{
 		// Resolve aX� + bX + c = 0 ; a = 1, b = 2 <ray.direction | ray.origin - center> , c = || origin - center || - radius * 2
 		double b = 2 * dot(ray.direction, ray.origin - center);
@@ -680,6 +717,21 @@ public:
 		//P = r.O + t * C
 		intersectionPoint = ray.origin + t * ray.direction;
 		intersectionNormal = normalize(intersectionPoint - center);
+		//col = albedo;
+		double frequency = 0.2;
+		//double lightness = abs(fmod(frequency * (intersectionPoint[0] + intersectionPoint[1] + intersectionPoint[2]), 1.0));
+		//double lightness = abs(fmod(frequency * (intersectionPoint[0]), 1.0) * fmod(intersectionPoint[1], 1.0) * fmod(intersectionPoint[2], 1.0));
+		
+		int a0 = (int)(frequency * intersectionPoint[0] + 100000000);
+		int a1 = (int)(frequency * intersectionPoint[1] + 100000000);
+		int a2 = (int)(frequency * intersectionPoint[2] + 100000000);
+		double lightness = (double)((a0 + a1 + a2) % 2);
+
+
+		//col = Vector3(lightness + hash13({(double)a0 - 100000000, (double)a1 - 100000000, (double)a2 - 100000000}), lightness + hash13({(double)a0 - 100000000, (double)a2 - 100000000, (double)a1 - 100000000}), lightness + hash13({(double)a2 - 100000000, (double)a1 - 100000000, (double)a0 - 100000000}));
+		double colorFactor = 0.6;
+		col = Vector3(lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a1 - 100000000, (double)a2 - 100000000}), lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a2 - 100000000, (double)a1 - 100000000}), lightness + colorFactor * hash13({(double)a2 - 100000000, (double)a1 - 100000000, (double)a0 - 100000000}));
+
 		return true;
 	}
 	Vector3 center;
