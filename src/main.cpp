@@ -1,22 +1,23 @@
 #define _CRT_SECURE_NO_WARNINGS 1
 
-// TO DO: add boundingboxes to the spheres !
-// TO DO : put all the parameters in a static struct
-// TO DO : put all data in std::array instead of std::vector whenever possible
-
-// TO DO : remove all pointers to BVH
-#define IMAGE_WIDTH 1024
-#define CAMERA_FOV 90.0 //60.0
+#define IMAGE_WIDTH 512
+#define CAMERA_FOV 75.0 // 60.0
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
 #define AIR_INDEX 1.0
-#define RENDER_STEP_COUNT 150
-#define AA_RADIUS 0.1 // TO DO : fix cross error when AA_RADIUS is set to 0 !!!
-#define GLOBAL_NUM_BOUNCES 3
+#define RENDER_STEP_COUNT 1
+#define AA_RADIUS 0.1
+#define GLOBAL_NUM_BOUNCES 1
 #define DEPTH_OF_FIELD_AMPLITUDE 0.000
 #define DEPTH_OF_FIELD_DISTANCE 1.0
 #define _OPENMP
 
+
+#define ACTIVATE_IMPORTANCE_SAMPLING 1
+#define ACTIVATE_CUSTOM_MATERIALS 0
+#define SPHERE_BBOX_OPTIMISATION 1
+#define MESH_BVH_OPTIMIZATION 1
+#define MESH_AABB_OPTIMIZATION 1
 
 #include <iostream>
 #include <vector>
@@ -35,50 +36,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #include "utilities.hpp"
-
-// TO DO : make ALL threads work on different parts of the image ! (otherwise, omp parallel for makes some threads work more than some other ones)
-// TO DO : shift index with wavelengts -> Shoot rays of a certain wavelength
-// TO DO : implement importance sampling (07/02/2025) for extended sources
-// TO DO : Make macro to enable direct / extended sources lighting
-// TO DO : make render progression percentage print
-// TO DO : implement on GPU ?
-// TO DO : allow other camera ratios
-// TO DO : ALWAYS compare the std::uniform and custom hash output images !
-// TO DO : Add a #define STOCHASTIC_SAMPLING 1
-// TO DO : make multiple different random engines !
-// TO DO : Implement Sobol and Halton sequences Quasi Monte-Carlo sampling
-// TO DO : implement "ray killing" feature : the more bounces and the largest the distance is, the less bounces we compute
-// TO DO : make it possible to input a transform matrix for the spheres
-// TO DO : implement custom ratio
-// 
-// Methode de Sobol : polynômes irréductibles x^... + x^3 + x^2 + x + 1
-// Use random sequences scrambling ! Owen scrambling 
-// Sobol est assez imbattable, Halton est moins bien
-// Autre technique qui marche très bien : choisir un point de départ et un vecteur d'offset bien choisi, que l'on itère, ça boucle sur les bords
-// 	   -> Rank 1 sequencing
-// 	   -> des ensembles de vecteurs qui marchent bien ont été trouvés dans toutes les dimensions
-// Le bruit bleu, ça marche très bien en général : certains disent que Poisson c'est du blue noise, d'autre disent que pas
-// 	   Plein de façons de le générer, avec du transport optimal, relaxation de points, GBN (gaussian blue noise), lent mais fait des points vraiment bien distribués
-// L'analyse de ces points se fait avec le spectre moyen en amplitude de la transformée de Fourrier des coordonnées des points.
-// Comme c'est à peu près isotrope selon la fréquence 0, 
-// et quand on plot une tranche 1D de cette transformée de Fourier (elle est avec une symétrie de révolution autour de (0,0), 
-// on a une caractéristique où on veut des valeurs les plus proches de zéro possible dans les basses fréquences, 
-// avec une fréquence non nulle le plus à droite possible (excepté le pic précisément situé en (0,0) )
-// Problème des grilles : marche très mal en dimension élevée, à cause du manque de contrôle sur les nombres de poins. 
-// Les grilles c'est pas mal quand même, de base, mais Sobol c'est mieux.
-// 	Pour implémenter le Owen Scrambling, on ne veut pas stocker tout l'arbre des permutations, 
-// donc on a besoin d'une fonction de hashage qui dit si on permute en chaque point,
-// 	et c'est assez compliqué.
-// 	   C'est assez trivial de faire les méthodes de rang 1. Il y a des tables de vecteurs d'offset possibles.
-// Autre nom des méthodes de rang 1 : random latices -> Voir publication de Pierre l'Ecuyer.
-// Ces low discrepency sequences sont utilisées à chaque rebond
-// 	Le Owen Scrambling étant assez compliqué, on peut aussi translater d'un vecteur aléatoire tous les points du pixel, avec un modulo sur les coordonnées
-// static std::vector<std::default_random_engine> engine(threadCount); // random seed = 10
-//static std::uniform_real_distribution<double> uniform( 0 , 1) ;
-// Note : l'encodage des polynomes est en décimal pour représenter le binaire, et le coefficient de plus bas degré (1) et de plus haut degré (1 aussi) sont ommis
-
-
-
 
 
 double clamp255(double x)
@@ -149,6 +106,8 @@ public:
 				//return { 10000000, 0, 0 };
 			}
 
+			bool isEntering = true;
+
 			if (objects[hitObjectIndex]->isTransparent || objects[hitObjectIndex]->isMirror)
 			{
 				if (objects[hitObjectIndex]->isMirror)
@@ -175,6 +134,7 @@ public:
 					Vector3 Tt = indexRatio * (ray.direction - dot(ray.direction, intersectionNormal) * intersectionNormal);
 					Vector3 Tn = sqrt(1 - sqr(indexRatio) * (1 - sqr(dot(ray.direction, intersectionNormal)))) * intersectionNormal;
 					fresnelRay = { intersectionPoint + EPSILON * intersectionNormal, Tn + Tt };
+					isEntering = false;
 				}
 
 				double k0 = sqr(n1 - n2) / sqr(n1 + n2);
@@ -195,11 +155,11 @@ public:
 			}
 
 			/*
-			Vector3 PL = lightPosition - intersectionPoint;
-			double d2 = PL.norm2();
-			PL = PL / sqrt(d2);
+			Vector3 pointToLight = lightPosition - intersectionPoint;
+			double d2 = pointToLight.norm2();
+			pointToLight = pointToLight / sqrt(d2);
 
-			Ray shadowRay = { intersectionPoint + EPSILON * intersectionNormal, PL };
+			Ray shadowRay = { intersectionPoint + EPSILON * intersectionNormal, pointToLight };
 			double shadow_t = 0;
 			bool isLight = true;
 			Vector3 a = { 0, 0, 0 };
@@ -219,7 +179,7 @@ public:
 			// Direct lighting
 			if (isLight)
 			{
-				color = objects[hitObjectIndex].albedo * lightIntensity * dot(intersectionNormal, PL) / (4 * M_PI * d2 * M_PI);
+				color = objects[hitObjectIndex].albedo * lightIntensity * dot(intersectionNormal, pointToLight) / (4 * M_PI * d2 * M_PI);
 			}
 			*/
 
@@ -238,6 +198,51 @@ public:
 			With the final normalized vector, we compute the scalar product with the normal distance. We divide by the square of the radius, and by 0 if we are in shadow
 			*/
 
+#if ACTIVATE_IMPORTANCE_SAMPLING
+			Vector3 bounceOrigin = { 0, 0, 0 };
+
+			if (isEntering)
+			{
+				bounceOrigin = EPSILON * intersectionNormal + intersectionPoint;
+			}
+			else
+			{
+				bounceOrigin = - EPSILON * intersectionNormal + intersectionPoint;
+			}
+
+			const Sphere* light = dynamic_cast<const Sphere *>(objects[0]);
+			Vector3 shadowPoint = { 0, 0, 0 };
+			Vector3 shadowNormal = { 0, 0, 0 };
+			Vector3 shadowCol = { 0, 0, 0 };
+			Vector3 directCol = { 0, 0, 0 };
+
+			// We will shoot a ray to tell whether there is shadow on the current intersectionPoint
+			const Vector3 pointToLight = normalize(light->center - intersectionPoint);
+			const Vector3 lightNormal = normalize(random_cos( -1.0 * pointToLight, intersectionPoint));
+			const Vector3 lightPointTarget = light->center + lightNormal * light->radius + EPSILON * lightNormal;
+			const Vector3 directionToLight = normalize(lightPointTarget - bounceOrigin);
+			double distanceToLight = sqrt((lightPointTarget - bounceOrigin).norm2());
+
+			Ray shadow_ray = { bounceOrigin, directionToLight };
+
+			// Indirect lighting
+			Vector3 indirectCol = color * getColor({ bounceOrigin, random_cos(intersectionNormal, intersectionPoint) }, numBounces - 1);
+
+			for (int i = 0; i < objects.size(); ++i) // This loop MUST include the light itself, e.g. start with 0
+			{
+				bool shadowRayIntersects = objects[i]->intersect(shadow_ray, shadowPoint, shadowNormal, t, shadowCol);
+				if (t < distanceToLight)
+				{
+					return indirectCol;
+				}
+			}
+
+			directCol = color * lightIntensity * light->albedo / (4 * sqr(M_PI));
+			directCol = directCol * dot(directionToLight, intersectionNormal) / dot(-1 * pointToLight, lightNormal);
+			directCol = directCol * dot(-1 * directionToLight, lightNormal) / sqr(distanceToLight);
+
+			return directCol + indirectCol;
+#else
 			// Extended source
 			if (hitObjectIndex == 0)
 			{
@@ -248,8 +253,9 @@ public:
 			Vector3 randomRayDirection = random_cos(intersectionNormal, intersectionPoint); // randomly sample ray us ing random cos
 			//Vector3 indirectLightingColor = objects[hitObjectIndex]->albedo * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
 			//return color + indirectLightingColor;
-			
+
 			return color * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
+#endif
 		}
 		else
 		{
@@ -263,64 +269,63 @@ public:
 	}
 
 	std::vector<const Geometry*> objects;
-	Vector3 lightPosition = { 10.0, 20.0, 40.0}; // x = -10 dans le pdf de cours
+	Vector3 lightPosition = { 10.0, 20.0, 40.0};
 	double lightIntensity = 1000 * 2e07;
 };
 
-// TO DO : implement custom hash function
 
 int main() 
 {
-	// Orientation canonique : Y est vers le haut
-	/*
-	for (int i = 0; i < threadCount; ++i)
-	{
-		engine[i].seed(i);
-	}
-	*/
 	Timer timer;
-	timer.start();
 	const int W = IMAGE_WIDTH;
 	const int H = IMAGE_WIDTH;
-	double cameraFOV = CAMERA_FOV * M_PI / 180.0; // FOV angle
-	Vector3 camOrigin( 0.0, -8.0, 20.0 );
+	double cameraFOV = CAMERA_FOV * M_PI / 180.0;
+	Vector3 camOrigin( 15.0, 0.0, 45.0 );
 	
-	double angleUp = 35 * M_PI / 180.0;
+	double angleUp = 0.0 * M_PI / 180.0;
+	double lateralAngle = 10.0 * M_PI / 180.0;
 	Vector3 cameraUp(0.0, cos(angleUp), sin(angleUp));
 	Vector3 cameraDir(0.0, -sin(angleUp), cos(angleUp));
 	Vector3 cameraRight = cross(cameraUp, cameraDir);
+	Vector3 rotatedCameraDir = cameraDir * cos(lateralAngle) + cameraRight * sin(lateralAngle);
+
+	cameraDir = rotatedCameraDir;
+
+	cameraRight = cross(cameraUp, cameraDir);
+	
 	Scene scene;
-	scene.addObject(new Sphere({ { 0, 40, 0 },  {1.0, 1.0, 1.0}, 18.0,   false, false,  1.3 })); // Extended light !!
-	TriangleMesh* mesh = new TriangleMesh({ {1.0, 1.0, 1.0}, false, false, 1.0 });
-	mesh->readOBJ("resources/cat/cat.obj");
-	mesh->scaleTranslate(0.6, { 0, -10, 0 });
-	mesh->ComputeAABB(mesh->meshAABB); // TO DO : automate this, putt all mesh initializations in the constructor
-	mesh->initBVH();
+	//                               Center,          albedo,    radius,  MateriaType,      refractiveIndex
+	scene.addObject(new Sphere({ { 0, 31, 0 },  {1.0, 1.0, 1.0}, 4.0, MaterialType::ALBEDO,  1.3 })); // Extended light !!
+	scene.addObject(new Sphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Right red wall
+	scene.addObject(new Sphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Left blue wall
+	scene.addObject(new Sphere({ { 0, 1000, 0 },  {1.0, 1.0, 1.0}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Top white ceiling
+	scene.addObject(new Sphere({ { 0, -950, 0 },  {0.3, 0.7, 0.3}, 940.0,  MaterialType::COLOR_CHECKERBOARD, 1.0 })); // Bottom floor
+	scene.addObject(new Sphere({ { 0, 0, 1000 },  {1.0, 1.0, 1.0}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Back (behind camera) wall
+	scene.addObject(new Sphere({ { 0, 0, -1000 }, {0.2, 0.2, 0.7}, 940.0,  MaterialType::CHECKERBOARD, 1.0 })); // Front blue wall - CHECKERBOARD
 
-	mesh->loadTexture("resources/cat/cat_diff.png");
-	scene.addObject(mesh);
-	//                Center,          albedo,          radius, isMirror, isTransparent, refractiveIndex
-	//scene.addObject({ { 0, 0, 0 },     {0.6, 0.1, 0.8}, 10.0,  false, false, 1.0 }); // Mat sphere 1
-	//scene.addObject(new Sphere({ { 12, 12, 0 },   {0.1, 0.1, 0.4}, 5.0,   true,  false, 1.0 })); // Mirror sphere
-	//scene.addObject(new Sphere({ { -12, 12, 0 },  {0.3, 0.7, 0.3}, 5.0,   false, true,  2.0 })); // Transparent sphere
-	//scene.addObject({ { 0, 12, 16 },   {0.1, 0.1, 0.4}, 2.0,   false, true,  1.3 }); // Transparent sphere 2
-	//scene.addObject({ { 5, -3, 16 },  {0.1, 0.1, 0.4}, 3.0,    false, true,  1.3 }); // Transparent sphere 3
-	//scene.addObject({ { -5, -3, 12 },   {0.1, 0.1, 0.4}, 3.0,  true,  false, 1.3 }); // Mirror sphere 2
+	scene.addObject(new Sphere({ { 26, -1, -10 },  {0.6, 0.1, 0.8}, 8.0, MaterialType::ALBEDO, 1.0 }));  // Mat sphere
+	scene.addObject(new Sphere({ { 8.5, 17, -10 },   {0.1, 0.1, 0.4}, 9.0,  MaterialType::MIRROR, 1.0 }));  // Mirror sphere
+	scene.addObject(new Sphere({ { 7, -7, 19 },  {0.3, 0.7, 0.3}, 3.5,  MaterialType::TRANSPARENT,  2.0 }));  // Transparent sphere 1
+	scene.addObject(new Sphere({ { 16, -8.5, 28 },  {0.3, 0.7, 0.3}, 2.0,  MaterialType::TRANSPARENT,  1.2 }));  // Transparent sphere 2
 
-	scene.addObject(new Sphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0, false, false, 1.0 })); // Right red wall
-	scene.addObject(new Sphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 })); // Left blue wall
-	scene.addObject(new Sphere({ { 0, 1000, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Top green ceiling
-	scene.addObject(new Sphere({ { 0, -950, 0 },  {0.3, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Bottom green floor
-	scene.addObject(new Sphere({ { 0, 0, 1000 },  {0.7, 0.7, 0.3}, 940.0, false, false, 1.0 })); // Back yellow wall
-	scene.addObject(new Sphere({ { 0, 0, -1000 }, {0.2, 0.2, 0.7}, 940.0, false, false, 1.0 })); // Front blue wall
+	//                                    Albedo,       MaterialType,       refractiveIndex,    modelFile,     Scale,   Position,     TextureFile  
+	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/dragon/scene.obj", 0.2, { 0, -10, 0 }, "resources/dragon/textures/DefaultMaterial_baseColor.jpeg" }));
+	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::MIRROR, 1.0, "resources/suzanne/suzanne.obj", 5.5, { -10, -4, 12.5 }}));
+	scene.addObject(new TriangleMesh({ {1.0, 0.6, 0.1}, MaterialType::FIRE, 1.0, "resources/teapot/teapot.obj", 3.0, { 21, -10, 12 }}));
+	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/tree/pine_tree.obj", 0.05, { 36, 6, 0 }, "resources/tree/10447_Pine_Tree_v1_Diffuse.jpg"}));
+
+	//scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/cat/cat.obj", 0.2, { 7, -10, 23 }, "resources/cat/cat_diff.png"}));
+	
 	const double gamma = 2.2;
 
 #ifdef _OPENMP
 	std::cout << "[INFO] OpenMP is active.\n";
 #endif
-
 	char* image = new char[W * H * 3];
+	double deltaX, deltaY = 0;
+	double deltaXDOF,deltaYDOF = 0;
 	std::cout << "[INFO] Rendering started.\n";
+	timer.start();
 #pragma omp parallel for schedule(dynamic, 1)
 	for (int x = 0; x < H; ++x) 
 	{
@@ -330,16 +335,12 @@ int main()
 
 			for (int step = 0; step < RENDER_STEP_COUNT; ++step )
 			{
-				double deltaX = 0;
-				double deltaY = 0;
 				boxMuller(AA_RADIUS, deltaX, deltaY);
-				Vector3 u = normalize(Vector3(y + deltaY - W / 2, -(x + deltaX - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+				Vector3 camDirection = normalize(Vector3(y + deltaY - W / 2, -(x + deltaX - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
 				Vector3 intersectionPoint = {0, 0, 0}, intersectionNormal = {0, 0, 0};
-				double deltaXDOF;
-				double deltaYDOF;
 				boxMuller(DEPTH_OF_FIELD_AMPLITUDE, deltaXDOF, deltaYDOF);
 				Vector3 locCamOrigin = camOrigin + Vector3(deltaXDOF, deltaYDOF, 0);
-				Vector3 camDestination = camOrigin + u * DEPTH_OF_FIELD_DISTANCE;
+				Vector3 camDestination = camOrigin + camDirection * DEPTH_OF_FIELD_DISTANCE;
 				Vector3 localCamDirection = normalize(camDestination - locCamOrigin);
 
 				localCamDirection = localCamDirection[0] * cameraRight + localCamDirection[1] * cameraUp + localCamDirection[2] * cameraDir;
@@ -350,9 +351,9 @@ int main()
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/course7.png", W, H, 3, &image[0], 0);
+	stbi_write_png("outputImage/final.png", W, H, 3, &image[0], 0);
 	delete[] image;
 	std::cout << "[INFO] Image generation done.\n";
-	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() << "ms.\n";
+	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() / 1000.0 << "s.\n";
 	return 0;
 }

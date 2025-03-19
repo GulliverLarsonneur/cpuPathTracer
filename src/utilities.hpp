@@ -8,6 +8,16 @@
 #define BVH_LEAF_TRIANGLE_COUNT 4 // Comes from the cost of intersecting 4 triangles VS the cost of intersecting a AABB
 
 
+enum class MaterialType
+{
+	ALBEDO = 0,
+	MIRROR,
+	TRANSPARENT,
+	CHECKERBOARD,
+	COLOR_CHECKERBOARD,
+	FIRE
+};
+
 // Each thread has its own random engine instance
 thread_local std::default_random_engine engine{ std::random_device{}() };
 static std::uniform_real_distribution<double> uniform(0, 1);
@@ -236,6 +246,8 @@ private:
 };
 
 
+void getMaterialCol(const Vector3& intersectionPoint, const Vector3& intersectionNormal, Vector3& col, const Vector3& albedo, MaterialType materialType);
+
 class TriangleIndices {
 public:
 	TriangleIndices(int vtxi = -1, int vtxj = -1, int vtxk = -1, int ni = -1, int nj = -1, int nk = -1, int uvi = -1, int uvj = -1, int uvk = -1, int group = -1, bool added = false) : vtxi(vtxi), vtxj(vtxj), vtxk(vtxk), uvi(uvi), uvj(uvj), uvk(uvk), ni(ni), nj(nj), nk(nk), group(group) {
@@ -313,9 +325,26 @@ class TriangleMesh : public Geometry
 public:
   ~TriangleMesh() {}
 	TriangleMesh(Vector3 _albedo,
-		bool _isMirror,
-		bool _isTransparent,
-		float _refractiveIndex) : Geometry(_albedo, _isMirror, _isTransparent, _refractiveIndex), meshAABB(Vector3{0, 0, 0}, Vector3{0, 0, 0}) {};
+		MaterialType _materialType,
+		float _refractiveIndex,
+		const char* _obj,
+		double _scale,
+		const Vector3& _position,
+		const char* _tex = ""
+		): 
+		materialType(_materialType),
+		Geometry(_albedo, (_materialType == MaterialType::MIRROR), (_materialType == MaterialType::TRANSPARENT), _refractiveIndex),
+		meshAABB(Vector3{0, 0, 0}, Vector3{0, 0, 0})
+	{
+		readOBJ(_obj);
+		scaleTranslate(_scale, _position);
+		ComputeAABB(meshAABB, 0, indices.size());
+#if MESH_BVH_OPTIMIZATION
+		initBVH();
+#endif
+		if(_tex != "")
+			loadTexture(_tex);
+	};
 
 	void scaleTranslate(double scale, const Vector3& translation)
 	{
@@ -566,12 +595,14 @@ public:
 	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& best_t, Vector3& col) const
 	{
 		// optimization TO DO : add the best_t as a parameter to intersect, and compare the intersection point distance to best_t that we currently have.
+#if MESH_AABB_OPTIMIZATION
 		if (!meshAABB.intersect(ray))
 		{
 			return false;
 		}
-
+#endif
 		bool hasIntersected = false;
+#if MESH_BVH_OPTIMIZATION
 		BVH* BVHstack[MAX_BVH_DEPTH];
 		BVHstack[0] = meshBVH;
 		int sizeBVHStack = 1;
@@ -594,9 +625,15 @@ public:
 			}
 			else
 			{
+#endif
 				best_t = std::numeric_limits<double>::max();
+#if MESH_BVH_OPTIMIZATION
 				for (int triangleIndex = currentBVH->startRange; triangleIndex < currentBVH->endRange; ++triangleIndex)
 				{
+#else
+				for (int triangleIndex = 0; triangleIndex < indices.size(); ++triangleIndex)
+				{
+#endif
 					const Vector3& A = vertices[indices[triangleIndex].vtxi];
 					const Vector3& B = vertices[indices[triangleIndex].vtxj];
 					const Vector3& C = vertices[indices[triangleIndex].vtxk];
@@ -643,20 +680,22 @@ public:
 						col = Vector3(textures[indices[triangleIndex].group][3 * (uvx + uvy * w)], textures[indices[triangleIndex].group][3 * (uvx + uvy * w) + 1], textures[indices[triangleIndex].group][3 * (uvx + uvy * w) + 2]); // TO DO : finish this !!
 						//std::cout << "col = " << col << "\n" << std::endl;
 					}
+					else
+					{
+						getMaterialCol(intersectionPoint, intersectionNormal, col, albedo, materialType);
+					}
 				}
+#if MESH_BVH_OPTIMIZATION
 			}
 		}
+#endif
 		return hasIntersected;
 	}
 
-	void ComputeAABB(AABB& aabb, int startRange = 0, int endRange = -1)
+	void ComputeAABB(AABB& aabb, int startRange, int endRange)
 	{
-		if (endRange == -1)
-		{
-			endRange = vertices.size();
-		}
 		Vector3 minCoords = std::numeric_limits<double>::max() * Vector3{ 1.0, 1.0, 1.0 };
-		Vector3 maxCoords = std::numeric_limits<double>::max() * Vector3{ -1.0, -1.0, -1.0 };
+		Vector3 maxCoords = std::numeric_limits<double>::min() * Vector3{ 1.0, 1.0, 1.0 };
 
 		for (int triangleIndex = startRange; triangleIndex < endRange; ++triangleIndex)
 		{
@@ -665,6 +704,7 @@ public:
 				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxi][j], minCoords[j]);
 				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxj][j], minCoords[j]);
 				minCoords[j] = std::min(vertices[indices[triangleIndex].vtxk][j], minCoords[j]);
+
 				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxi][j], maxCoords[j]);
 				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxj][j], maxCoords[j]);
 				maxCoords[j] = std::max(vertices[indices[triangleIndex].vtxk][j], maxCoords[j]);
@@ -685,6 +725,7 @@ public:
 	std::vector<Vector3> vertexcolors;
 	AABB meshAABB;
 	BVH* meshBVH;
+	MaterialType materialType;
 };
 
 typedef struct Sphere : public Geometry
@@ -692,12 +733,23 @@ typedef struct Sphere : public Geometry
 public:
 	Sphere(Vector3 _center, Vector3 _albedo,
 		float _radius,
-		bool _isMirror,
-		bool _isTransparent,
-		float _refractiveIndex) : center(_center), radius(_radius), Geometry(_albedo, _isMirror, _isTransparent, _refractiveIndex){}
+		MaterialType _materialType,
+		float _refractiveIndex
+		) :
+		center(_center),
+		radius(_radius),
+		materialType(_materialType),
+		Geometry(_albedo, (_materialType == MaterialType::MIRROR), (_materialType == MaterialType::TRANSPARENT), _refractiveIndex),
+		boundingBox(_center - Vector3{_radius, _radius, _radius}, _center + Vector3{_radius, _radius, _radius}) { }
 	bool intersect(const Ray& ray, Vector3& intersectionPoint, Vector3& intersectionNormal, double& t, Vector3& col) const
 	{
-		// Resolve aX� + bX + c = 0 ; a = 1, b = 2 <ray.direction | ray.origin - center> , c = || origin - center || - radius * 2
+#if SPHERE_BBOX_OPTIMISATION
+		if (!boundingBox.intersect(ray))
+		{
+			return false;
+		}
+#endif
+		// Resolve aX^2 + bX + c = 0 ; a = 1, b = 2 < ray.direction | ray.origin - center> , c = || origin - center || - radius * 2
 		double b = 2 * dot(ray.direction, ray.origin - center);
 		double delta = sqr(b) - 4 * ((ray.origin - center).norm2() - radius * radius);
 		if (delta < 0)
@@ -717,25 +769,57 @@ public:
 		//P = r.O + t * C
 		intersectionPoint = ray.origin + t * ray.direction;
 		intersectionNormal = normalize(intersectionPoint - center);
-		col = albedo;
-		double frequency = 0.2;
-		//double lightness = abs(fmod(frequency * (intersectionPoint[0] + intersectionPoint[1] + intersectionPoint[2]), 1.0));
-		//double lightness = abs(fmod(frequency * (intersectionPoint[0]), 1.0) * fmod(intersectionPoint[1], 1.0) * fmod(intersectionPoint[2], 1.0));
-		
-		int a0 = (int)(frequency * intersectionPoint[0] + 100000000);
-		int a1 = (int)(frequency * intersectionPoint[1] + 100000000);
-		int a2 = (int)(frequency * intersectionPoint[2] + 100000000);
-		double lightness = (double)((a0 + a1 + a2) % 2);
 
-
-		//col = Vector3(lightness + hash13({(double)a0 - 100000000, (double)a1 - 100000000, (double)a2 - 100000000}), lightness + hash13({(double)a0 - 100000000, (double)a2 - 100000000, (double)a1 - 100000000}), lightness + hash13({(double)a2 - 100000000, (double)a1 - 100000000, (double)a0 - 100000000}));
-		double colorFactor = 0.6;
-		col = Vector3(lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a1 - 100000000, (double)a2 - 100000000}), lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a2 - 100000000, (double)a1 - 100000000}), lightness + colorFactor * hash13({(double)a2 - 100000000, (double)a1 - 100000000, (double)a0 - 100000000}));
-
+		getMaterialCol(intersectionPoint, intersectionNormal, col, albedo, materialType);
 		return true;
 	}
+	MaterialType materialType;
+	AABB boundingBox;
 	Vector3 center;
 	double radius;
 } Sphere;
 
 
+void getMaterialCol(const Vector3& intersectionPoint, const Vector3& intersectionNormal, Vector3& col, const Vector3& albedo, MaterialType materialType)
+{
+#if ACTIVATE_CUSTOM_MATERIALS
+	double frequency, colorFactor, lightness, frequencyY;
+	int a0, a1, a2;
+	switch (materialType)
+	{
+	case MaterialType::ALBEDO:
+		col = albedo;
+		return;
+	case MaterialType::CHECKERBOARD:
+		frequency = 0.2;
+		colorFactor = 0.6;
+		a0 = (int)(frequency * intersectionPoint[0] + 100000000);
+		a1 = (int)(frequency * intersectionPoint[1] + 100000000);
+		a2 = (int)(frequency * intersectionPoint[2] + 100000000);
+		lightness = (double)((a0 + a1 + a2) % 2);
+		col = Vector3(lightness, lightness, lightness);
+		return;
+	case MaterialType::COLOR_CHECKERBOARD:
+		frequency = 0.2;
+		colorFactor = 0.6;
+		a0 = (int)(frequency * intersectionPoint[0] + 100000000);
+		a1 = (int)(frequency * intersectionPoint[1] + 100000000);
+		a2 = (int)(frequency * intersectionPoint[2] + 100000000);
+		lightness = (double)((a0 + a1 + a2) % 2);
+		col = Vector3(lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a1 - 100000000, (double)a2 - 100000000}),
+			lightness + colorFactor * hash13({(double)a0 - 100000000, (double)a2 - 100000000, (double)a1 - 100000000}),
+			lightness + colorFactor * hash13({(double)a2 - 100000000, (double)a1 - 100000000, (double)a0 - 100000000})
+		);
+		return;
+	case MaterialType::FIRE:
+		frequency = 1.2;
+		frequencyY = 0.3;
+		float t = sin(frequency * intersectionPoint[0] + frequencyY * intersectionPoint[1]) * sin(frequency * intersectionPoint[2] + frequencyY * intersectionPoint[1]);
+
+		col = t * Vector3{ 1.0, 0.2, 0.0 } + (1 - t) * Vector3{ 0.6, 0.3, 0.1 };
+		return;
+	}
+#else
+	col = albedo;
+#endif
+}
