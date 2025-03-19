@@ -1,12 +1,14 @@
 #define _CRT_SECURE_NO_WARNINGS 1
 
 // Performance settings :
-#define IMAGE_WIDTH 128
-#define RENDER_STEP_COUNT 1
+
+#define IMAGE_HEIGHT 128
+#define IMAGE_WIDTH (int)(IMAGE_HEIGHT * 1.37)
+#define RENDER_SAMPLES 1
 #define GLOBAL_NUM_BOUNCES 3
 
 // Aesthetics settings :
-#define CAMERA_FOV 75.0
+#define CAMERA_FOV 80.0
 #define CAMERA_VERTICAL_ANGLE 0.0
 #define CAMERA_LATERAL_ANGLE 10.0
 #define CAMERA_X 15.0
@@ -24,7 +26,7 @@
 #define ACTIVATE_DEPTH_OF_FIELD 1
 #define ACTIVATE_INDIRECT_LIGHTING 1
 #define ACTIVATE_IMPORTANCE_SAMPLING 1
-#define ACTIVATE_CUSTOM_MATERIALS 0
+#define ACTIVATE_CUSTOM_MATERIALS 1
 #define SPHERE_BBOX_OPTIMISATION 1
 #define MESH_BVH_OPTIMIZATION 1
 #define MESH_AABB_OPTIMIZATION 1
@@ -159,9 +161,7 @@ public:
 #if !EXTENDED_SOURCE
 			const Sphere* light = dynamic_cast<const Sphere *>(objects[0]);
 
-			Vector3 lightPosition = { 10.0, 20.0, 40.0};
-
-			Vector3 pointToLight = lightPosition - intersectionPoint;
+			Vector3 pointToLight = light->center - intersectionPoint;
 			double d2 = pointToLight.norm2();
 			pointToLight = pointToLight / sqrt(d2);
 
@@ -171,21 +171,24 @@ public:
 			Vector3 a = { 0, 0, 0 };
 			Vector3 b = { 0, 0, 0 };
 			Vector3 c = { 0, 0, 0 };
-			int hitObjectIndex = 0;
+			int hitObjectIndex2 = 0;
 
-			if (intersect(shadowRay, a, b, shadow_t, hitObjectIndex, c))
+			if (intersect(shadowRay, a, b, shadow_t, hitObjectIndex2, c))
 			{
+				if (hitObjectIndex2 != 0)
+				{
 					//std::cout << shadow_t << "\n";
 					if (shadow_t * shadow_t < d2)
 					{
 						isLightened = false;
 					}
+				}
 			}
 
 			// Direct lighting
 			if (isLightened)
 			{
-				return color + objects[hitObjectIndex]->albedo * lightIntensity * dot(intersectionNormal, pointToLight) / (4 * M_PI * d2 * M_PI);
+				return color * lightIntensity * dot(intersectionNormal, pointToLight) / (4 * M_PI * d2 * M_PI);
 			}
 			else
 			{
@@ -275,24 +278,20 @@ public:
 int main() 
 {
 	Timer timer;
-	const int W = IMAGE_WIDTH;
-	const int H = IMAGE_WIDTH;
 	double cameraFOV = CAMERA_FOV * M_PI / 180.0;
 	Vector3 camOrigin( CAMERA_X, CAMERA_Y, CAMERA_Z );
-	
 	double angleUp = CAMERA_VERTICAL_ANGLE * M_PI / 180.0;
 	double lateralAngle = CAMERA_LATERAL_ANGLE * M_PI / 180.0;
 	Vector3 cameraUp(0.0, cos(angleUp), sin(angleUp));
 	Vector3 cameraDir(0.0, -sin(angleUp), cos(angleUp));
 	Vector3 cameraRight = cross(cameraUp, cameraDir);
 	Vector3 rotatedCameraDir = cameraDir * cos(lateralAngle) + cameraRight * sin(lateralAngle);
-
 	cameraDir = rotatedCameraDir;
-
 	cameraRight = cross(cameraUp, cameraDir);
 	
 	Scene scene;
 	//                               Center,          albedo,    radius,  MateriaType,      refractiveIndex
+	// The light MUST be the first object
 	scene.addObject(new Sphere({ { 0, 31, 0 },  {1.0, 1.0, 1.0}, 4.0, MaterialType::ALBEDO,  1.3 })); // Extended light !!
 	scene.addObject(new Sphere({ { 1000, 0, 0 },  {0.7, 0.3, 0.3}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Right red wall
 	scene.addObject(new Sphere({ { -1000, 0, 0 }, {0.2, 0.2, 0.7}, 940.0,  MaterialType::ALBEDO, 1.0 })); // Left blue wall
@@ -318,7 +317,7 @@ int main()
 #ifdef _OPENMP
 	std::cout << "[INFO] OpenMP is active.\n";
 #endif
-	char* image = new char[W * H * 3];
+	char* image = new char[IMAGE_WIDTH * IMAGE_HEIGHT * 3];
 	double deltaX, deltaY = 0;
 	double deltaXDOF,deltaYDOF = 0;
 	Vector3 intersectionPoint = { 0, 0, 0 };
@@ -328,19 +327,19 @@ int main()
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1)
 #endif
-	for (int x = 0; x < H; ++x) 
+	for (int x = 0; x < IMAGE_HEIGHT; ++x) 
 	{
-		for (int y = 0; y < W; ++y) 
+		for (int y = 0; y < IMAGE_WIDTH; ++y) 
 		{
 			Vector3 color = { 0, 0, 0 };
 
-			for (int step = 0; step < RENDER_STEP_COUNT; ++step )
+			for (int step = 0; step < RENDER_SAMPLES; ++step )
 			{
 #if ACTIVATE_ANTIALIASING
 				boxMuller(AA_RADIUS, deltaX, deltaY);
-				Vector3 camDirection = normalize(Vector3(y + deltaY - W / 2, -(x + deltaX - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+				Vector3 camDirection = normalize(Vector3(y + deltaY - IMAGE_WIDTH / 2, -(x + deltaX - IMAGE_HEIGHT / 2), - IMAGE_WIDTH / ( 2 * tan(cameraFOV / 2) )));
 #else
-				Vector3 camDirection = normalize(Vector3(y - W / 2, -(x - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+				Vector3 camDirection = normalize(Vector3(y - IMAGE_WIDTH / 2, -(x - IMAGE_HEIGHT / 2), - IMAGE_WIDTH / ( 2 * tan(cameraFOV / 2) )));
 #endif
 #if ACTIVATE_DEPTH_OF_FIELD
 				boxMuller(DEPTH_OF_FIELD_AMPLITUDE, deltaXDOF, deltaYDOF);
@@ -357,7 +356,7 @@ int main()
 				color = color + sceneColor;
 #endif
 			}
-			setImageColor(image, x * W + y, gammaCorrect(color / RENDER_STEP_COUNT, gamma));
+			setImageColor(image, x * IMAGE_WIDTH + y, gammaCorrect(color / RENDER_SAMPLES, gamma));
 		}
 	}
 	timer.stop();
@@ -369,10 +368,10 @@ int main()
 	stbi_write_png(("outputImage/final-" 
 		+ std::to_string(IMAGE_WIDTH) 
 		+ "x" 
-		+ std::to_string(IMAGE_WIDTH)
+		+ std::to_string(IMAGE_HEIGHT)
 		+ "_pixels-" 
-		+ std::to_string(RENDER_STEP_COUNT)
-		+ "_steps-" 
+		+ std::to_string(RENDER_SAMPLES)
+		+ "_samples-" 
 		+ std::to_string(GLOBAL_NUM_BOUNCES)
 		+ "_bounces-" 
 #if EXTENDED_SOURCE
@@ -398,7 +397,7 @@ int main()
 #if ACTIVATE_IMPORTANCE_SAMPLING
 		+ "importance-"
 #endif
-		+ std::to_string(timer.elapsedMilliseconds() / 1000.0) + "_seconds.png").c_str(), W, H, 3, &image[0], 0);
+		+ std::to_string(timer.elapsedMilliseconds() / 1000.0) + "_seconds.png").c_str(), IMAGE_WIDTH, IMAGE_HEIGHT, 3, &image[0], 0);
 	delete[] image;
 
 	return 0;
