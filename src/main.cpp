@@ -1,23 +1,38 @@
 #define _CRT_SECURE_NO_WARNINGS 1
 
-#define IMAGE_WIDTH 512
-#define CAMERA_FOV 75.0 // 60.0
-#define M_PI 3.1415926535897932384626
-#define EPSILON 0.00001
-#define AIR_INDEX 1.0
+// Performance settings :
+#define IMAGE_WIDTH 128
 #define RENDER_STEP_COUNT 1
-#define AA_RADIUS 0.1
-#define GLOBAL_NUM_BOUNCES 1
-#define DEPTH_OF_FIELD_AMPLITUDE 0.000
-#define DEPTH_OF_FIELD_DISTANCE 1.0
-#define _OPENMP
+#define GLOBAL_NUM_BOUNCES 3
 
+// Aesthetics settings :
+#define CAMERA_FOV 75.0
+#define CAMERA_VERTICAL_ANGLE 0.0
+#define CAMERA_LATERAL_ANGLE 10.0
+#define CAMERA_X 15.0
+#define CAMERA_Y 0.0
+#define CAMERA_Z 45.0
+#define LIGHT_INTENSITY 500 * 2e07
+#define AIR_INDEX 1.0
+#define AA_RADIUS 0.2
+#define DEPTH_OF_FIELD_AMPLITUDE 0.1
+#define DEPTH_OF_FIELD_DISTANCE 55.0
 
+// Toggleable optimizations and techniques :
+#define EXTENDED_SOURCE 0
+#define ACTIVATE_ANTIALIASING 1
+#define ACTIVATE_DEPTH_OF_FIELD 1
+#define ACTIVATE_INDIRECT_LIGHTING 1
 #define ACTIVATE_IMPORTANCE_SAMPLING 1
 #define ACTIVATE_CUSTOM_MATERIALS 0
 #define SPHERE_BBOX_OPTIMISATION 1
 #define MESH_BVH_OPTIMIZATION 1
 #define MESH_AABB_OPTIMIZATION 1
+
+// Globals
+#define M_PI 3.1415926535897932384626
+#define EPSILON 0.00001
+#define _OPENMP
 
 #include <iostream>
 #include <vector>
@@ -38,25 +53,6 @@
 #include "utilities.hpp"
 
 
-double clamp255(double x)
-{
-	if (x > 255.0) return 255.0;
-	if (x < 0.0) return 0.0;
-	return x;
-}
-
-
-void setImageColor(char* image, int index, Vector3 color)
-{
-	image[index * 3 + 0] = clamp255(color[0]);
-	image[index * 3 + 1] = clamp255(color[1]);
-	image[index * 3 + 2] = clamp255(color[2]);
-}
-
-Vector3 gammaCorrect(Vector3 v, double gamma)
-{
-	return Vector3({ std::pow(v[0], 1.0 / gamma), std::pow(v[1], 1.0 / gamma), std::pow(v[2], 1.0 / gamma) });
-}
 
 class Scene
 {
@@ -66,7 +62,13 @@ public:
 		bool hasIntersected = false;
 
 		double t_min = std::numeric_limits<double>::max();
-		for (int objectIndex = 0; objectIndex < objects.size(); objectIndex++)
+#if EXTENDED_SOURCE
+		int startIndex = 0;
+#else
+		int startIndex = 1; // We ignore the light sphere
+#endif
+
+		for (int objectIndex = startIndex; objectIndex < objects.size(); objectIndex++)
 		{
 			Vector3 localIntersectionPoint = { 0, 0, 0 };
 			Vector3 localIntersectionNormal = { 0, 0, 0 };
@@ -154,49 +156,42 @@ public:
 				}
 			}
 
-			/*
+#if !EXTENDED_SOURCE
+			const Sphere* light = dynamic_cast<const Sphere *>(objects[0]);
+
+			Vector3 lightPosition = { 10.0, 20.0, 40.0};
+
 			Vector3 pointToLight = lightPosition - intersectionPoint;
 			double d2 = pointToLight.norm2();
 			pointToLight = pointToLight / sqrt(d2);
 
 			Ray shadowRay = { intersectionPoint + EPSILON * intersectionNormal, pointToLight };
 			double shadow_t = 0;
-			bool isLight = true;
+			bool isLightened = true;
 			Vector3 a = { 0, 0, 0 };
 			Vector3 b = { 0, 0, 0 };
-			int _ = 0;
+			Vector3 c = { 0, 0, 0 };
+			int hitObjectIndex = 0;
 
-
-			if (intersect(shadowRay, a, b, shadow_t, _))
+			if (intersect(shadowRay, a, b, shadow_t, hitObjectIndex, c))
 			{
-				//std::cout << shadow_t << "\n";
-				if (shadow_t * shadow_t < d2)
-				{
-					isLight = false;
-				}
+					//std::cout << shadow_t << "\n";
+					if (shadow_t * shadow_t < d2)
+					{
+						isLightened = false;
+					}
 			}
-			Vector3 color = { 0, 0, 0 };
+
 			// Direct lighting
-			if (isLight)
+			if (isLightened)
 			{
-				color = objects[hitObjectIndex].albedo * lightIntensity * dot(intersectionNormal, pointToLight) / (4 * M_PI * d2 * M_PI);
+				return color + objects[hitObjectIndex]->albedo * lightIntensity * dot(intersectionNormal, pointToLight) / (4 * M_PI * d2 * M_PI);
 			}
-			*/
-
-			/*
-			Principle of the importance sampling : On the LAST bounce :
-			Camera -> many bounces -> Object intersection point P -> Light object origin L
-
-			Then, construct a ray R coming from L and going towards P, with a random angle perturbation with random cos
-			intersect R with the surface of the light object, get a L2 point
-
-			PL2 is the ray that should then be used to compute the lighting 
-
-			ALL vectors must be normalized !!
-			Do not forget epsilon
-
-			With the final normalized vector, we compute the scalar product with the normal distance. We divide by the square of the radius, and by 0 if we are in shadow
-			*/
+			else
+			{
+				return { 0, 0, 0 };
+			}
+#else // !EXTENDED_SOURCE
 
 #if ACTIVATE_IMPORTANCE_SAMPLING
 			Vector3 bounceOrigin = { 0, 0, 0 };
@@ -224,10 +219,12 @@ public:
 			double distanceToLight = sqrt((lightPointTarget - bounceOrigin).norm2());
 
 			Ray shadow_ray = { bounceOrigin, directionToLight };
-
+#if ACTIVATE_INDIRECT_LIGHTING
 			// Indirect lighting
 			Vector3 indirectCol = color * getColor({ bounceOrigin, random_cos(intersectionNormal, intersectionPoint) }, numBounces - 1);
-
+#else // ACTIVATE_INDIRECT_LIGHTING
+			Vector3 indirectCol = { 0, 0, 0 };
+#endif // ACTIVATE_INDIRECT_LIGHTING
 			for (int i = 0; i < objects.size(); ++i) // This loop MUST include the light itself, e.g. start with 0
 			{
 				bool shadowRayIntersects = objects[i]->intersect(shadow_ray, shadowPoint, shadowNormal, t, shadowCol);
@@ -242,7 +239,7 @@ public:
 			directCol = directCol * dot(-1 * directionToLight, lightNormal) / sqr(distanceToLight);
 
 			return directCol + indirectCol;
-#else
+#else // ACTIVATE_IMPORTANCE_SAMPLING
 			// Extended source
 			if (hitObjectIndex == 0)
 			{
@@ -255,7 +252,9 @@ public:
 			//return color + indirectLightingColor;
 
 			return color * getColor({ intersectionPoint + EPSILON * intersectionNormal, randomRayDirection }, numBounces - 1);
-#endif
+#endif // ACTIVATE_IMPORTANCE_SAMPLING
+
+#endif // !EXTENDED_SOURCE
 		}
 		else
 		{
@@ -269,8 +268,7 @@ public:
 	}
 
 	std::vector<const Geometry*> objects;
-	Vector3 lightPosition = { 10.0, 20.0, 40.0};
-	double lightIntensity = 1000 * 2e07;
+	double lightIntensity = LIGHT_INTENSITY;
 };
 
 
@@ -280,10 +278,10 @@ int main()
 	const int W = IMAGE_WIDTH;
 	const int H = IMAGE_WIDTH;
 	double cameraFOV = CAMERA_FOV * M_PI / 180.0;
-	Vector3 camOrigin( 15.0, 0.0, 45.0 );
+	Vector3 camOrigin( CAMERA_X, CAMERA_Y, CAMERA_Z );
 	
-	double angleUp = 0.0 * M_PI / 180.0;
-	double lateralAngle = 10.0 * M_PI / 180.0;
+	double angleUp = CAMERA_VERTICAL_ANGLE * M_PI / 180.0;
+	double lateralAngle = CAMERA_LATERAL_ANGLE * M_PI / 180.0;
 	Vector3 cameraUp(0.0, cos(angleUp), sin(angleUp));
 	Vector3 cameraDir(0.0, -sin(angleUp), cos(angleUp));
 	Vector3 cameraRight = cross(cameraUp, cameraDir);
@@ -312,8 +310,7 @@ int main()
 	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/dragon/scene.obj", 0.2, { 0, -10, 0 }, "resources/dragon/textures/DefaultMaterial_baseColor.jpeg" }));
 	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::MIRROR, 1.0, "resources/suzanne/suzanne.obj", 5.5, { -10, -4, 12.5 }}));
 	scene.addObject(new TriangleMesh({ {1.0, 0.6, 0.1}, MaterialType::FIRE, 1.0, "resources/teapot/teapot.obj", 3.0, { 21, -10, 12 }}));
-	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/tree/pine_tree.obj", 0.05, { 36, 6, 0 }, "resources/tree/10447_Pine_Tree_v1_Diffuse.jpg"}));
-
+	//scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/tree/pine_tree.obj", 0.05, { 36, 6, 0 }, "resources/tree/10447_Pine_Tree_v1_Diffuse.jpg"}));
 	//scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/cat/cat.obj", 0.2, { 7, -10, 23 }, "resources/cat/cat_diff.png"}));
 	
 	const double gamma = 2.2;
@@ -324,9 +321,13 @@ int main()
 	char* image = new char[W * H * 3];
 	double deltaX, deltaY = 0;
 	double deltaXDOF,deltaYDOF = 0;
+	Vector3 intersectionPoint = { 0, 0, 0 };
+	Vector3 intersectionNormal = {0, 0, 0};
 	std::cout << "[INFO] Rendering started.\n";
 	timer.start();
+#ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1)
+#endif
 	for (int x = 0; x < H; ++x) 
 	{
 		for (int y = 0; y < W; ++y) 
@@ -335,25 +336,70 @@ int main()
 
 			for (int step = 0; step < RENDER_STEP_COUNT; ++step )
 			{
+#if ACTIVATE_ANTIALIASING
 				boxMuller(AA_RADIUS, deltaX, deltaY);
 				Vector3 camDirection = normalize(Vector3(y + deltaY - W / 2, -(x + deltaX - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
-				Vector3 intersectionPoint = {0, 0, 0}, intersectionNormal = {0, 0, 0};
+#else
+				Vector3 camDirection = normalize(Vector3(y - W / 2, -(x - H / 2), - W / ( 2 * tan(cameraFOV / 2) )));
+#endif
+#if ACTIVATE_DEPTH_OF_FIELD
 				boxMuller(DEPTH_OF_FIELD_AMPLITUDE, deltaXDOF, deltaYDOF);
 				Vector3 locCamOrigin = camOrigin + Vector3(deltaXDOF, deltaYDOF, 0);
 				Vector3 camDestination = camOrigin + camDirection * DEPTH_OF_FIELD_DISTANCE;
-				Vector3 localCamDirection = normalize(camDestination - locCamOrigin);
+				camDirection = normalize(camDestination - locCamOrigin);
+				Vector3 localCamDirection = camDirection[0] * cameraRight + camDirection[1] * cameraUp + camDirection[2] * cameraDir;
 
-				localCamDirection = localCamDirection[0] * cameraRight + localCamDirection[1] * cameraUp + localCamDirection[2] * cameraDir;
-
-				color += scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // TO DO : The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
+				Vector3 sceneColor = scene.getColor({ locCamOrigin, localCamDirection}, GLOBAL_NUM_BOUNCES); // TO DO : The diaphragm, in theory, should not be gaussian, but circular with rejection, or hexagonal
+				color = color + sceneColor;
+#else
+				Vector3 localCamDirection = camDirection[0] * cameraRight + camDirection[1] * cameraUp + camDirection[2] * cameraDir;
+				Vector3 sceneColor = scene.getColor({ camOrigin, localCamDirection }, GLOBAL_NUM_BOUNCES);
+				color = color + sceneColor;
+#endif
 			}
 			setImageColor(image, x * W + y, gammaCorrect(color / RENDER_STEP_COUNT, gamma));
 		}
 	}
 	timer.stop();
-	stbi_write_png("outputImage/final.png", W, H, 3, &image[0], 0);
-	delete[] image;
+
 	std::cout << "[INFO] Image generation done.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() / 1000.0 << "s.\n";
+
+
+	stbi_write_png(("outputImage/final-" 
+		+ std::to_string(IMAGE_WIDTH) 
+		+ "x" 
+		+ std::to_string(IMAGE_WIDTH)
+		+ "_pixels-" 
+		+ std::to_string(RENDER_STEP_COUNT)
+		+ "_steps-" 
+		+ std::to_string(GLOBAL_NUM_BOUNCES)
+		+ "_bounces-" 
+#if EXTENDED_SOURCE
+		+ "EXT_SOURCE-"
+#else
+		+ "PT_LIGHT-"
+#endif
+#if MESH_BVH_OPTIMIZATION
+		+ "BVH-"
+#endif
+#if ACTIVATE_ANTIALIASING
+		+ "AA-"
+#endif
+#if ACTIVATE_DEPTH_OF_FIELD
+		+ "DOF-"
+#endif
+#if ACTIVATE_INDIRECT_LIGHTING
+		+ "indirect-"
+#endif
+#if ACTIVATE_INDIRECT_LIGHTING
+		+ "indirect-"
+#endif
+#if ACTIVATE_IMPORTANCE_SAMPLING
+		+ "importance-"
+#endif
+		+ std::to_string(timer.elapsedMilliseconds() / 1000.0) + "_seconds.png").c_str(), W, H, 3, &image[0], 0);
+	delete[] image;
+
 	return 0;
 }

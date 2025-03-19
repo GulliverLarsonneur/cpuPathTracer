@@ -22,6 +22,8 @@ enum class MaterialType
 thread_local std::default_random_engine engine{ std::random_device{}() };
 static std::uniform_real_distribution<double> uniform(0, 1);
 
+
+
 // generates a gaussian distribution with two uniform distributions as an input (x and y) and a standard deviation :
 inline void boxMuller( double stdev , double &x , double &y )
 {
@@ -245,6 +247,24 @@ private:
 	bool                                               m_bRunning = false;
 };
 
+double clamp255(double x)
+{
+	if (x > 255.0) return 255.0;
+	if (x < 0.0) return 0.0;
+	return x;
+}
+
+void setImageColor(char* image, int index, Vector3 color)
+{
+	image[index * 3 + 0] = clamp255(color[0]);
+	image[index * 3 + 1] = clamp255(color[1]);
+	image[index * 3 + 2] = clamp255(color[2]);
+}
+
+Vector3 gammaCorrect(Vector3 v, double gamma)
+{
+	return Vector3({ std::pow(v[0], 1.0 / gamma), std::pow(v[1], 1.0 / gamma), std::pow(v[2], 1.0 / gamma) });
+}
 
 void getMaterialCol(const Vector3& intersectionPoint, const Vector3& intersectionNormal, Vector3& col, const Vector3& albedo, MaterialType materialType);
 
