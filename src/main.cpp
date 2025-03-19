@@ -2,9 +2,9 @@
 
 // Performance settings :
 
-#define IMAGE_HEIGHT 128
+#define IMAGE_HEIGHT 512
 #define IMAGE_WIDTH (int)(IMAGE_HEIGHT * 1.37)
-#define RENDER_SAMPLES 1
+#define RENDER_SAMPLES 5
 #define GLOBAL_NUM_BOUNCES 3
 
 // Aesthetics settings :
@@ -14,7 +14,7 @@
 #define CAMERA_X 15.0
 #define CAMERA_Y 0.0
 #define CAMERA_Z 45.0
-#define LIGHT_INTENSITY 500 * 2e07
+#define LIGHT_INTENSITY 1000 * 2e07
 #define AIR_INDEX 1.0
 #define AA_RADIUS 0.2
 #define DEPTH_OF_FIELD_AMPLITUDE 0.1
@@ -24,17 +24,21 @@
 #define EXTENDED_SOURCE 0
 #define ACTIVATE_ANTIALIASING 1
 #define ACTIVATE_DEPTH_OF_FIELD 1
-#define ACTIVATE_INDIRECT_LIGHTING 1
+#define ACTIVATE_INDIRECT_LIGHTING 0
 #define ACTIVATE_IMPORTANCE_SAMPLING 1
-#define ACTIVATE_CUSTOM_MATERIALS 1
+#define ACTIVATE_CUSTOM_MATERIALS 0
 #define SPHERE_BBOX_OPTIMISATION 1
 #define MESH_BVH_OPTIMIZATION 1
 #define MESH_AABB_OPTIMIZATION 1
+#define USE_MULTITHREADING 1
+#define USE_TRIANGLE_MESHES 0
 
 // Globals
 #define M_PI 3.1415926535897932384626
 #define EPSILON 0.00001
+#if USE_MULTITHREADING
 #define _OPENMP
+#endif
 
 #include <iostream>
 #include <vector>
@@ -304,14 +308,14 @@ int main()
 	scene.addObject(new Sphere({ { 8.5, 17, -10 },   {0.1, 0.1, 0.4}, 9.0,  MaterialType::MIRROR, 1.0 }));  // Mirror sphere
 	scene.addObject(new Sphere({ { 7, -7, 19 },  {0.3, 0.7, 0.3}, 3.5,  MaterialType::TRANSPARENT,  2.0 }));  // Transparent sphere 1
 	scene.addObject(new Sphere({ { 16, -8.5, 28 },  {0.3, 0.7, 0.3}, 2.0,  MaterialType::TRANSPARENT,  1.2 }));  // Transparent sphere 2
-
+#if USE_TRIANGLE_MESHES
 	//                                    Albedo,       MaterialType,       refractiveIndex,    modelFile,     Scale,   Position,     TextureFile  
 	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/dragon/scene.obj", 0.2, { 0, -10, 0 }, "resources/dragon/textures/DefaultMaterial_baseColor.jpeg" }));
 	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::MIRROR, 1.0, "resources/suzanne/suzanne.obj", 5.5, { -10, -4, 12.5 }}));
 	scene.addObject(new TriangleMesh({ {1.0, 0.6, 0.1}, MaterialType::FIRE, 1.0, "resources/teapot/teapot.obj", 3.0, { 21, -10, 12 }}));
-	//scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/tree/pine_tree.obj", 0.05, { 36, 6, 0 }, "resources/tree/10447_Pine_Tree_v1_Diffuse.jpg"}));
+	scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/tree/pine_tree.obj", 0.05, { 36, 6, 0 }, "resources/tree/10447_Pine_Tree_v1_Diffuse.jpg"}));
 	//scene.addObject(new TriangleMesh({ {1.0, 1.0, 1.0}, MaterialType::ALBEDO, 1.0, "resources/cat/cat.obj", 0.2, { 7, -10, 23 }, "resources/cat/cat_diff.png"}));
-	
+#endif
 	const double gamma = 2.2;
 
 #ifdef _OPENMP
@@ -324,6 +328,8 @@ int main()
 	Vector3 intersectionNormal = {0, 0, 0};
 	std::cout << "[INFO] Rendering started.\n";
 	timer.start();
+	int pixelProcessed = 0;
+	
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1)
 #endif
@@ -332,6 +338,13 @@ int main()
 		for (int y = 0; y < IMAGE_WIDTH; ++y) 
 		{
 			Vector3 color = { 0, 0, 0 };
+
+			pixelProcessed++;
+			if ((pixelProcessed % (IMAGE_WIDTH * IMAGE_HEIGHT / 10)) == 0)
+			{
+				std::cout << "[INFO] Rendering progress : " << ((100 * pixelProcessed) / (IMAGE_WIDTH * IMAGE_HEIGHT)) + 1 << "%\n";
+			}
+
 
 			for (int step = 0; step < RENDER_SAMPLES; ++step )
 			{
@@ -361,11 +374,11 @@ int main()
 	}
 	timer.stop();
 
-	std::cout << "[INFO] Image generation done.\n";
+	std::cout << "[INFO] Rendering finished.\n";
 	std::cout << "[INFO] Rendering time : " << timer.elapsedMilliseconds() / 1000.0 << "s.\n";
 
 
-	stbi_write_png(("outputImage/final-" 
+	stbi_write_png(("outputImage/" 
 		+ std::to_string(IMAGE_WIDTH) 
 		+ "x" 
 		+ std::to_string(IMAGE_HEIGHT)
@@ -382,14 +395,14 @@ int main()
 #if MESH_BVH_OPTIMIZATION
 		+ "BVH-"
 #endif
+#if !MESH_AABB_OPTIMIZATION
+		+ "NO_AABB-"
+#endif
 #if ACTIVATE_ANTIALIASING
 		+ "AA-"
 #endif
 #if ACTIVATE_DEPTH_OF_FIELD
 		+ "DOF-"
-#endif
-#if ACTIVATE_INDIRECT_LIGHTING
-		+ "indirect-"
 #endif
 #if ACTIVATE_INDIRECT_LIGHTING
 		+ "indirect-"
