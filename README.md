@@ -37,5 +37,8 @@ This project does not include a build system yet. Visual Studio project files ar
 
 ### Screenshots
 
-![Screenshot of the application, end of course 1](screenshots/course1/couse1_11.png)  
-*Screenshot of the application, end of course 1*
+<div>
+<img align="left" src="screenshots/final/final_final.png" width="2048" style="margin-right: 10px; margin-bottom: 10px;"> 
+</div><br>
+
+*Screenshot of an output of the program*
